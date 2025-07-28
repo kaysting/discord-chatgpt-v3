@@ -1,5 +1,5 @@
 # Discord ChatGPT v3
-A bot providing a relatively full-featured AI chatbot experience to the comfort of your Discord DMs.
+A bot providing a relatively full-featured AI chatbot experience in the comfort of your Discord DMs.
 
 ## Running the bot
 1. [Download and install Node.js](https://nodejs.org/en/download/) if you don't have it

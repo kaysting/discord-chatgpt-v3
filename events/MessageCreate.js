@@ -203,6 +203,7 @@ module.exports = async message => {
     const isRepliedTo = reference && reference.author.id === bot.user.id;
     const hasContent = message.content.trim().length > 0 || message.attachments.size > 0;
     if ((!isChannelDm && !isMentioned && !isRepliedTo) || !hasContent) return;
+    const interactionId = message.id;
     // Send typing until we're finished
     const sendTyping = async () => {
         await message.channel.sendTyping();
@@ -233,7 +234,7 @@ module.exports = async message => {
                 // Pull saved interaction output from database or ignore
                 const interactionId = db.prepare(`SELECT interaction_id FROM interaction_messages WHERE id = ?`).get(msg.id)?.interaction_id;
                 if (interactionId && !referencedInteractions.has(interactionId)) {
-                    const json = db.prepare(`SELECT output_entries FROM interactions WHERE id = ?`).get(interactionId)?.output_entries;
+                    const json = db.prepare(`SELECT output_entries FROM interactions WHERE prompt_message_id = ?`).get(interactionId)?.output_entries;
                     if (json) {
                         try {
                             const outputEntries = JSON.parse(json);
@@ -357,9 +358,9 @@ module.exports = async message => {
             ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
             : `Channel: DM with ${message.author.globalName || message.author.username}`,
         '',
-        `You are a bot named ${bot.user.username} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables and embedded images, as well as LaTeX expressions, are not supported, so do not use them in your responses.`,
+        `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables and embedded images, as well as LaTeX expressions, are not supported, so do not use them in your responses.`,
         '',
-        `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
+        `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed (using Whisper for audio) and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
         '',
         'Use tools as instructed in their descriptions, or if the user asks you to. The user can see when you use a tool.',
         '',
@@ -420,9 +421,11 @@ module.exports = async message => {
                         logInfo(`Model called tool ${entry.name}`);
                         const args = entry.arguments ? JSON.parse(entry.arguments) : {};
                         output = await toolHandlers[entry.name](args);
-                        await message.channel.send({
+                        const msg = await message.channel.send({
                             content: `-# Used tool \`${entry.name}\` with arguments \`${JSON.stringify(args)}\``
                         });
+                        db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
+                            .run(msg.id, interactionId);
                         await message.channel.sendTyping();
                     } catch (error) {
                         logError(`Error occurred while executing tool ${entry.name}: ${error.message}`);
@@ -445,20 +448,22 @@ module.exports = async message => {
         }
     } while (resend);
     // Save interaction to database
-    const interactionId = db.prepare(`INSERT INTO interactions (time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?)`)
-        .run(Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries)).lastInsertRowid;
+    db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)
+        .run(interactionId, Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries));
     // Split response output into chunks and send to Discord
     clearInterval(sendTypingInterval);
     const parts = splitOutput(res.output_text);
-    for (const part of parts) {
+    for (let i = 0; i < parts.length; i++) {
         logInfo(`Sending output chunk in channel ${message.channel.id}`);
-        await message.channel.sendTyping();
         const msg = await message.channel.send({
-            content: part || '-# *no content*',
+            content: parts[i] || '-# *no content*',
             allowedMentions: { parse: [] }
         });
         db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
             .run(msg.id, interactionId);
+        if (i < parts.length - 1) {
+            await message.channel.sendTyping();
+        }
         await utils.sleep(1000); // Avoid hitting rate limits
     }
 };
