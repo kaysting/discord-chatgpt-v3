@@ -170,7 +170,7 @@ const splitOutput = output => {
     return finalChunks;
 };
 
-const getUserName = async (userId, guild) => {
+const getUserName = async (userId, guild, includeId = false) => {
     if (guild) {
         let member = guild.members.cache.get(userId);
         if (!member) {
@@ -180,7 +180,7 @@ const getUserName = async (userId, guild) => {
                 member = null;
             }
         }
-        return member ? (member.nickname || member.user.globalName || member.user.username) : `User ${userId}`;
+        return member ? (member.nickname || member.user.globalName || member.user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
     } else {
         let user = bot.users.cache.get(userId);
         if (!user) {
@@ -190,11 +190,15 @@ const getUserName = async (userId, guild) => {
                 user = null;
             }
         }
-        return user ? (user.globalName || user.username) : `User ${userId}`;
+        return user ? (user.globalName || user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
     }
 };
 
+const channelLastMsg = {};
+const channelResponding = {};
+
 module.exports = async message => {
+    channelLastMsg[message.channel.id] = message;
     // Check if message should be processed
     if (message.author.bot) return;
     const isChannelDm = message.channel.type === Discord.ChannelType.DM;
@@ -204,15 +208,159 @@ module.exports = async message => {
     const hasContent = message.content.trim().length > 0 || message.attachments.size > 0;
     if ((!isChannelDm && !isMentioned && !isRepliedTo) || !hasContent) return;
     const interactionId = message.id;
-    // Send typing until we're finished
-    const sendTyping = async () => {
-        await message.channel.sendTyping();
+    // Wait for running interaction to finish
+    if (channelResponding[message.channel.id]) {
+        await new Promise(resolve => {
+            const interval = setInterval(() => {
+                if (!channelResponding[message.channel.id]) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            }, 1000);
+        });
+    }
+    channelResponding[message.channel.id] = true;
+    // Function to send message
+    // Reply to the last associated message if something has been sent since
+    let lastAssociatedMessage = message;
+    const sendMessage = async (content = '-# *no content*') => {
+        let msg;
+        if (lastAssociatedMessage.id !== channelLastMsg[message.channel.id].id) {
+            msg = await lastAssociatedMessage.reply({
+                content, allowMentions: { parse: [], repliedUser: false }
+            });
+        } else {
+            msg = await message.channel.send({
+                content, allowMentions: { parse: [] }
+            });
+        }
+        lastAssociatedMessage = msg;
+        return msg;
     };
-    await sendTyping();
-    const sendTypingInterval = setInterval(sendTyping, 5000);
+    // Send typing until we're finished
+    await message.channel.sendTyping();
+    const sendTypingInterval = setInterval(() => message.channel.sendTyping(), 5000);
     // Prepare to fetch and format context
     const input = [];
     const referencedInteractions = new Set();
+    const getMessageEntry = async msg => {
+        const entry = {};
+        if (msg.author.id === bot.user.id) {
+            // Pull saved interaction output from database or ignore
+            const interactionId = db.prepare(`SELECT interaction_id FROM interaction_messages WHERE id = ?`).get(msg.id)?.interaction_id;
+            if (interactionId && !referencedInteractions.has(interactionId)) {
+                const json = db.prepare(`SELECT output_entries FROM interactions WHERE prompt_message_id = ?`).get(interactionId)?.output_entries;
+                if (json) {
+                    try {
+                        const outputEntries = JSON.parse(json);
+                        input.push(...outputEntries);
+                        referencedInteractions.add(interactionId);
+                        return null; // Skip this message as it's already processed
+                    } catch (error) {
+                        logError(`Failed to parse interaction output for message ${msg.id}: ${error.message}`);
+                    }
+                }
+            }
+        } else {
+            // Get referenced message if this is a reply
+            let reference = '';
+            if (msg.reference && msg.reference.messageId) {
+                const referencedMsg = await message.channel.messages.fetch(msg.reference.messageId).catch(() => null);
+                if (referencedMsg) {
+                    const refName = await getUserName(referencedMsg.author.id, referencedMsg.guild, true);
+                    const content = (referencedMsg.content + '\n' + referencedMsg.attachments.map(att => `[${att.name}]`).join(', ')).trim();
+                    reference = `Replying to ${refName} (Message ID ${referencedMsg.id}) - ${new Date(referencedMsg.createdTimestamp).toISOString()}:\n> ${content.split('\n').join('\n> ')}`;
+                }
+            }
+            // Replace user and channel mentions with their names in content
+            let content = await utils.replaceAsync(msg.content, /<@!?(\d+)>/g, async (match, userId) => {
+                const uname = await getUserName(userId, msg.guild);
+                return `@${uname}`;
+            });
+            content = content.replace(/<#(\d+)>/g, (match, channelId) => {
+                const channel = msg.guild ? msg.guild.channels.cache.get(channelId) : null;
+                return channel ? `#${channel.name}` : match;
+            });
+            // Format user message
+            const name = await getUserName(msg.author.id, msg.guild, true);
+            entry.role = 'user';
+            entry.content = [{
+                type: 'input_text', text: `${reference}\n\n${name} (Message ID: ${msg.id}) - ${new Date(msg.createdTimestamp).toISOString()}:\n${content}`.trim()
+            }];
+            // Add attachments
+            for (const attachment of msg.attachments.values()) {
+                const name = attachment.name;
+                const ext = name ? name.split('.').pop().toLowerCase() : '';
+                const type = (attachment.contentType || '').toLowerCase().split('/');
+                const size = attachment.size || 0;
+                const url = attachment.url;
+                const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
+                // Handle image attachments
+                if (config.input.images.enabled && imageExts.includes(ext) && size <= config.input.images.max_bytes) {
+                    entry.content.push({
+                        type: 'input_image', image_url: url
+                    });
+                } else if (config.input.audio.enabled && type[0] === 'audio' && size <= config.input.audio.max_bytes) {
+                    // Handle audio attachments
+                    const audioFilePath = await utils.downloadAttachment(attachment);
+                    const audioFileHash = db.prepare(`SELECT hash FROM attachment_files WHERE url = ?`).get(url)?.hash;
+                    let transcription;
+                    if (audioFilePath) {
+                        transcription = db.prepare(`SELECT transcription FROM audio_transcriptions WHERE file_hash = ?`).get(audioFileHash)?.transcription;
+                        if (!transcription) {
+                            try {
+                                logInfo(`Converting ${name} to low bitrate MP3`);
+                                const pathTemp = `./downloads/${Date.now()}.mp3`;
+                                await utils.sanitizeAudioFile(audioFilePath, pathTemp);
+                                logInfo(`Transcribing ${name}`);
+                                const res = await openai.audio.transcriptions.create({
+                                    model: config.ai.transcription_model,
+                                    file: fs.createReadStream(pathTemp)
+                                });
+                                fs.unlinkSync(pathTemp);
+                                transcription = res.text;
+                                db.prepare(`INSERT OR REPLACE INTO audio_transcriptions (file_hash, transcription) VALUES (?, ?)`)
+                                    .run(audioFileHash, transcription);
+                            } catch (error) {
+                                logError(`Failed to transcribe ${name}: ${error}`);
+                            }
+                        }
+                    }
+                    if (transcription) {
+                        entry.content.push({
+                            type: 'input_text', text: `Contents of attached audio file "${name}":\n${transcription}`
+                        });
+                    } else {
+                        entry.content.push({
+                            type: 'input_text', text: `Contents of attached audio file failed: "${name}".`
+                        });
+                    }
+                } else if (config.input.text_files.enabled && size <= config.input.text_files.max_bytes) {
+                    // Handle text files
+                    const textFilePath = await utils.downloadAttachment(attachment);
+                    if (utils.isFilePlainText(textFilePath)) {
+                        const textContent = fs.readFileSync(textFilePath, 'utf8');
+                        entry.content.push({
+                            type: 'input_text',
+                            text: `Content of attached text file "${name}":\n${textContent}`
+                        });
+                    } else {
+                        entry.content.push({
+                            type: 'input_text',
+                            text: `Invalid file attachment: "${name}"`
+                        });
+                    }
+                } else {
+                    // Still mention other attachments even if not processed
+                    entry.content.push({
+                        type: 'input_text',
+                        text: `Invalid file attachment: "${name}"`
+                    });
+                }
+            }
+        }
+        return entry.role ? entry : null;
+    };
     let messagesFetched = [];
     let ignoreBeforeTimestamp = db.prepare(`SELECT start_time FROM channel_starts WHERE channel_id = ?`).get(message.channel.id)?.start_time || 0;
     do {
@@ -229,122 +377,9 @@ module.exports = async message => {
             if (msg.createdTimestamp < ignoreBeforeTimestamp) break;
             // Skip if message is empty
             if (!msg.content && !msg.attachments.size) continue;
-            const entry = {};
-            if (msg.author.id === bot.user.id) {
-                // Pull saved interaction output from database or ignore
-                const interactionId = db.prepare(`SELECT interaction_id FROM interaction_messages WHERE id = ?`).get(msg.id)?.interaction_id;
-                if (interactionId && !referencedInteractions.has(interactionId)) {
-                    const json = db.prepare(`SELECT output_entries FROM interactions WHERE prompt_message_id = ?`).get(interactionId)?.output_entries;
-                    if (json) {
-                        try {
-                            const outputEntries = JSON.parse(json);
-                            input.push(...outputEntries);
-                            referencedInteractions.add(interactionId);
-                            continue;
-                        } catch (error) {
-                            logError(`Failed to parse interaction output for message ${msg.id}: ${error.message}`);
-                        }
-                    }
-                }
-            } else {
-                // Get referenced message if this is a reply
-                let reference = '';
-                if (msg.reference && msg.reference.messageId) {
-                    const referencedMsg = await message.channel.messages.fetch(msg.reference.messageId).catch(() => null);
-                    if (referencedMsg) {
-                        const refName = await getUserName(referencedMsg.author.id, referencedMsg.guild);
-                        const content = (referencedMsg.content + '\n' + referencedMsg.attachments.map(att => `[${att.name}]`).join(', ')).trim();
-                        reference = `Replying to ${refName}:\n> ${content.split('\n').join('\n> ')}`;
-                    }
-                }
-                // Replace user and channel mentions with their names in content
-                let content = await utils.replaceAsync(msg.content, /<@!?(\d+)>/g, async (match, userId) => {
-                    const uname = await getUserName(userId, msg.guild);
-                    return `@${uname}`;
-                });
-                content = content.replace(/<#(\d+)>/g, (match, channelId) => {
-                    const channel = msg.guild ? msg.guild.channels.cache.get(channelId) : null;
-                    return channel ? `#${channel.name}` : match;
-                });
-                // Format user message
-                const name = await getUserName(msg.author.id, msg.guild);
-                entry.role = 'user';
-                entry.content = [{
-                    type: 'input_text', text: `${reference}\n\n${name} (ID: ${msg.author.id}):\n${content}`.trim()
-                }];
-                // Add attachments
-                for (const attachment of msg.attachments.values()) {
-                    const name = attachment.name;
-                    const ext = name ? name.split('.').pop().toLowerCase() : '';
-                    const type = (attachment.contentType || '').toLowerCase().split('/');
-                    const size = attachment.size || 0;
-                    const url = attachment.url;
-                    const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
-                    // Handle image attachments
-                    if (config.input.images.enabled && imageExts.includes(ext) && size <= config.input.images.max_bytes) {
-                        entry.content.push({
-                            type: 'input_image', image_url: url
-                        });
-                    } else if (config.input.audio.enabled && type[0] === 'audio' && size <= config.input.audio.max_bytes) {
-                        // Handle audio attachments
-                        const audioFilePath = await utils.downloadAttachment(attachment);
-                        const audioFileHash = db.prepare(`SELECT hash FROM attachment_files WHERE url = ?`).get(url)?.hash;
-                        let transcription;
-                        if (audioFilePath) {
-                            transcription = db.prepare(`SELECT transcription FROM audio_transcriptions WHERE file_hash = ?`).get(audioFileHash)?.transcription;
-                            if (!transcription) {
-                                try {
-                                    logInfo(`Converting ${name} to low bitrate MP3`);
-                                    const pathTemp = `./downloads/${Date.now()}.mp3`;
-                                    await utils.sanitizeAudioFile(audioFilePath, pathTemp);
-                                    logInfo(`Transcribing ${name}`);
-                                    const res = await openai.audio.transcriptions.create({
-                                        model: config.ai.transcription_model,
-                                        file: fs.createReadStream(pathTemp)
-                                    });
-                                    fs.unlinkSync(pathTemp);
-                                    transcription = res.text;
-                                    db.prepare(`INSERT OR REPLACE INTO audio_transcriptions (file_hash, transcription) VALUES (?, ?)`)
-                                        .run(audioFileHash, transcription);
-                                } catch (error) {
-                                    logError(`Failed to transcribe ${name}: ${error}`);
-                                }
-                            }
-                        }
-                        if (transcription) {
-                            entry.content.push({
-                                type: 'input_text', text: `Contents of attached audio file "${name}":\n${transcription}`
-                            });
-                        } else {
-                            entry.content.push({
-                                type: 'input_text', text: `Contents of attached audio file failed: "${name}".`
-                            });
-                        }
-                    } else if (config.input.text_files.enabled && size <= config.input.text_files.max_bytes) {
-                        // Handle text files
-                        const textFilePath = await utils.downloadAttachment(attachment);
-                        if (utils.isFilePlainText(textFilePath)) {
-                            const textContent = fs.readFileSync(textFilePath, 'utf8');
-                            entry.content.push({
-                                type: 'input_text',
-                                text: `Content of attached text file "${name}":\n${textContent}`
-                            });
-                        } else {
-                            entry.content.push({
-                                type: 'input_text',
-                                text: `Invalid file attachment: "${name}"`
-                            });
-                        }
-                    } else {
-                        // Still mention other attachments even if not processed
-                        entry.content.push({
-                            type: 'input_text',
-                            text: `Invalid file attachment: "${name}"`
-                        });
-                    }
-                }
-            }
-            if (entry.role) {
+            // Get message entry
+            const entry = await getMessageEntry(msg);
+            if (entry) {
                 input.push(entry);
             }
         }
@@ -398,9 +433,7 @@ module.exports = async message => {
             if (tries >= 3) {
                 logError(`Max retries reached, aborting interaction.`);
                 clearInterval(sendTypingInterval);
-                await message.channel.send({
-                    content: `Error: OpenAI API request failed after multiple attempts. Please try again later.`
-                });
+                await sendMessage(`Error: OpenAI API request failed after multiple attempts. Please try again later.`);
                 return;
             }
             logError(`Retrying request...`);
@@ -421,9 +454,7 @@ module.exports = async message => {
                         logInfo(`Model called tool ${entry.name}`);
                         const args = entry.arguments ? JSON.parse(entry.arguments) : {};
                         output = await toolHandlers[entry.name](args);
-                        const msg = await message.channel.send({
-                            content: `-# Used tool \`${entry.name}\` with arguments \`${JSON.stringify(args)}\``
-                        });
+                        const msg = await sendMessage(`-# Used tool \`${entry.name}\` with arguments \`${JSON.stringify(args)}\``);
                         db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
                             .run(msg.id, interactionId);
                         await message.channel.sendTyping();
@@ -455,10 +486,7 @@ module.exports = async message => {
     const parts = splitOutput(res.output_text);
     for (let i = 0; i < parts.length; i++) {
         logInfo(`Sending output chunk in channel ${message.channel.id}`);
-        const msg = await message.channel.send({
-            content: parts[i] || '-# *no content*',
-            allowedMentions: { parse: [] }
-        });
+        const msg = await sendMessage(parts[i]);
         db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
             .run(msg.id, interactionId);
         if (i < parts.length - 1) {
@@ -466,4 +494,5 @@ module.exports = async message => {
         }
         await utils.sleep(1000); // Avoid hitting rate limits
     }
+    channelResponding[message.channel.id] = false;
 };

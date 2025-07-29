@@ -16,14 +16,14 @@ module.exports = {
         if (!interactionId) {
             return interaction.reply({
                 content: `This message isn't associated with a saved interaction.`,
-                ephemeral: true
+                flags: Discord.MessageFlags.Ephemeral
             });
         }
         const interactionUserId = db.prepare(`SELECT user_id FROM interactions WHERE prompt_message_id = ?`).get(interactionId)?.user_id;
         if (interactionUserId !== interaction.user.id) {
             return interaction.reply({
                 content: `You can only delete responses that you prompted.`,
-                ephemeral: true
+                flags: Discord.MessageFlags.Ephemeral
             });
         }
         const responseMessageIds = db.prepare(`SELECT id FROM interaction_messages WHERE interaction_id = ?`).all(interactionId).map(row => row.id);
@@ -37,7 +37,7 @@ module.exports = {
                 }
             }
         }
-        await interaction.deferReply({ ephemeral: true });
+        await interaction.deferReply({ flags: Discord.MessageFlags.Ephemeral });
         interaction.editReply({
             content: `Deleted all response messages.`
         });

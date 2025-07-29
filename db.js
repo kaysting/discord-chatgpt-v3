@@ -34,7 +34,7 @@ db.prepare(`CREATE TABLE IF NOT EXISTS audio_transcriptions (
 )`).run();
 
 db.prepare(`CREATE TABLE IF NOT EXISTS user_access (
-    user_id INTEGER NOT NULL PRIMARY KEY,
+    user_id TEXT NOT NULL PRIMARY KEY,
     can_access INTEGER NOT NULL
 )`).run();
 

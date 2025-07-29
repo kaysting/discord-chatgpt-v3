@@ -16,16 +16,17 @@ module.exports = {
         if (!interactionId) {
             return interaction.reply({
                 content: `This message isn't associated with a saved interaction.`,
-                ephemeral: true
+                flags: Discord.MessageFlags.Ephemeral
             });
         }
         const json = db.prepare(`SELECT output_entries FROM interactions WHERE prompt_message_id = ?`).get(interactionId)?.output_entries;
         if (!json) {
             return interaction.reply({
                 content: `No saved output found for this interaction.`,
-                ephemeral: true
+                flags: Discord.MessageFlags.Ephemeral
             });
         }
+        await interaction.deferReply({ flags: Discord.MessageFlags.Ephemeral });
         const outputEntries = JSON.parse(json);
         let content = '';
         for (const entry of outputEntries) {
@@ -39,9 +40,9 @@ module.exports = {
             }
         }
         const attachment = new Discord.AttachmentBuilder(Buffer.from(content), {
-            name: `response-${msg.id}.md`
+            name: `response.md`
         });
-        interaction.reply({
+        interaction.editReply({
             files: [attachment]
         });
     }
