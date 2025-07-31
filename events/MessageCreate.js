@@ -203,10 +203,17 @@ module.exports = async message => {
     if (message.author.bot) return;
     const isChannelDm = message.channel.type === Discord.ChannelType.DM;
     const isMentioned = message.mentions.has(bot.user) || message.content.includes(`<@${bot.user.id}>`);
-    const reference = message.reference ? await message.channel.messages.fetch(message.reference.messageId).catch(() => null) : null;
-    const isRepliedTo = reference && reference.author.id === bot.user.id;
+    const refMessage = message.reference ? await message.channel.messages.fetch(message.reference.messageId).catch(() => null) : null;
+    const isRepliedTo = refMessage && refMessage.author.id === bot.user.id;
     const hasContent = message.content.trim().length > 0 || message.attachments.size > 0;
-    if ((!isChannelDm && !isMentioned && !isRepliedTo) || !hasContent) return;
+    const validMessageTypes = [
+        Discord.MessageType.Default,
+        Discord.MessageType.Reply,
+        Discord.MessageType.ThreadStarterMessage
+    ];
+    const isValidMessageType = validMessageTypes.includes(message.type);
+    const shouldProcess = isValidMessageType && (isChannelDm || isMentioned || isRepliedTo) && hasContent;
+    if (!shouldProcess) return;
     const interactionId = message.id;
     // Wait for running interaction to finish
     if (channelResponding[message.channel.id]) {
@@ -269,7 +276,7 @@ module.exports = async message => {
                 if (referencedMsg) {
                     const refName = await getUserName(referencedMsg.author.id, referencedMsg.guild, true);
                     const content = (referencedMsg.content + '\n' + referencedMsg.attachments.map(att => `[${att.name}]`).join(', ')).trim();
-                    reference = `Replying to ${refName} (Message ID ${referencedMsg.id}) - ${new Date(referencedMsg.createdTimestamp).toISOString()}:\n> ${content.split('\n').join('\n> ')}`;
+                    reference = `Replying to ${refName} (Message ID ${referencedMsg.id}) - ${utils.prettyTimestamp(referencedMsg.createdTimestamp)}:\n> ${content.split('\n').join('\n> ')}`;
                 }
             }
             // Replace user and channel mentions with their names in content
@@ -285,7 +292,7 @@ module.exports = async message => {
             const name = await getUserName(msg.author.id, msg.guild, true);
             entry.role = 'user';
             entry.content = [{
-                type: 'input_text', text: `${reference}\n\n${name} (Message ID: ${msg.id}) - ${new Date(msg.createdTimestamp).toISOString()}:\n${content}`.trim()
+                type: 'input_text', text: `${reference}\n\n${name} (Message ID: ${msg.id}) - ${utils.prettyTimestamp(msg.createdTimestamp)}:\n${content}`.trim()
             }];
             // Add attachments
             for (const attachment of msg.attachments.values()) {
@@ -388,7 +395,7 @@ module.exports = async message => {
     input.reverse();
     // Create complete system prompt
     const systemLines = [
-        `Current time: ${new Date().toISOString()}`,
+        `Current time: ${utils.prettyTimestamp(Date.now())}`,
         message.guild
             ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
             : `Channel: DM with ${message.author.globalName || message.author.username}`,

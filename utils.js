@@ -3,6 +3,8 @@ const path = require('path');
 const crypto = require('crypto');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
+const dayjs = require('dayjs');
+dayjs.extend(require('dayjs/plugin/utc'));
 
 const log = (level, message) => {
     const ts = new Date().toISOString();
@@ -118,6 +120,11 @@ async function replaceAsync(str, regex, asyncFn) {
     return str.replace(regex, () => results[i++]);
 }
 
+// Returns a prettily formatted timestamp string in UTC
+const prettyTimestamp = parsableTs => {
+    return dayjs(parsableTs).utc().format('YYYY-MM-DD HH:mm:ss UTC');
+};
+
 module.exports = {
     logInfo,
     logWarn,
@@ -128,5 +135,6 @@ module.exports = {
     downloadAttachment,
     isFilePlainText,
     sanitizeAudioFile,
-    sleep
+    sleep,
+    prettyTimestamp
 };
