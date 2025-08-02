@@ -303,8 +303,8 @@ module.exports = async message => {
     const queueOutputChunks = () => {
         const chunks = require('../markdownSplitter')(outputText);
         for (let i = countChunksQueued; i < chunks.length; i++) {
-            const partsLeft = chunks.length - i;
-            if (!isResponseFinished && partsLeft < 3) return;
+            const countPartsLeft = chunks.length - i;
+            if (!isResponseFinished && countPartsLeft == 2) return;
             const chunk = chunks[i];
             outputChunks.push(chunk);
             countChunksQueued++;
