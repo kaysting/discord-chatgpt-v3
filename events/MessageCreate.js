@@ -230,7 +230,7 @@ module.exports = async message => {
     // Function to send message
     // Reply to the last associated message if something has been sent since
     let lastAssociatedMessage = message;
-    const sendMessage = async (content = '-# *no content*') => {
+    const sendMessage = async (content = '-# *no content*', save = true) => {
         let msg;
         if (lastAssociatedMessage.id !== channelLastMsg[message.channel.id].id) {
             msg = await lastAssociatedMessage.reply({
@@ -242,6 +242,10 @@ module.exports = async message => {
             });
         }
         lastAssociatedMessage = msg;
+        if (save) {
+            db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
+                .run(msg.id, interactionId);
+        }
         return msg;
     };
     // Send typing until we're finished
@@ -394,23 +398,24 @@ module.exports = async message => {
     // Reverse input to maintain chronological order
     input.reverse();
     // Create complete system prompt
-    const systemLines = [
-        `Current time: ${utils.prettyTimestamp(Date.now())}`,
-        message.guild
-            ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
-            : `Channel: DM with ${message.author.globalName || message.author.username}`,
-        '',
-        `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables and embedded images, as well as LaTeX expressions, are not supported, so do not use them in your responses.`,
-        '',
-        `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed (using Whisper for audio) and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
-        '',
-        'Use tools as instructed in their descriptions, or if the user asks you to. The user can see when you use a tool.',
-        '',
-        config.ai.system_prompt
-    ];
     input.unshift({
         role: 'developer',
-        content: systemLines.join('\n')
+        content: [
+            `Current time: ${utils.prettyTimestamp(Date.now())}`,
+            message.guild
+                ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
+                : `Channel: DM with ${message.author.globalName || message.author.username}`,
+            '',
+            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables and embedded images, as well as LaTeX expressions, are not supported, so do not use them in your responses.`,
+            '',
+            `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed (using Whisper for audio) and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
+            '',
+            'Use tools as instructed in their descriptions, or if the user asks you to. The user can see when you use a tool.'
+        ].join('\n')
+    });
+    input.unshift({
+        role: 'developer',
+        content: config.ai.system_prompt
     });
     // Get enabled tools
     const toolFiles = fs.readdirSync('./tools').filter(file => file.endsWith('.js'));
@@ -424,23 +429,98 @@ module.exports = async message => {
     }
     // Interact with OpenAI API
     const outputEntries = [];
-    let res;
     let resend = false;
     let tries = 0;
+    let outputText = '';
+    let isResponseFinished = false;
+    let countChunksQueued = 0;
+    let countChunksSent = 0;
+    // Interval to send output chunks
+    const outputChunks = [];
+    const sendOutputInterval = setInterval(async () => {
+        if (outputChunks.length == 0 && isResponseFinished) {
+            clearInterval(sendOutputInterval);
+            return;
+        }
+        if (outputChunks.length == 0) return;
+        clearInterval(sendTypingInterval);
+        // Get and send the next output chunk
+        const part = outputChunks.shift();
+        logInfo(`Sending output chunk #${countChunksSent + 1} in channel ${message.channel.id}`);
+        await sendMessage(part);
+        countChunksSent++;
+        // If there are more chunks to send, keep typing
+        if (!isResponseFinished || outputChunks.length > 0) {
+            message.channel.sendTyping();
+        }
+    }, 1000);
+    // Split response output into chunks and queue sending
+    const queueOutputChunks = () => {
+        const parts = splitOutput(outputText);
+        if (!isResponseFinished && parts.length === 1) return;
+        while (parts.length > 0) {
+            const part = parts.shift();
+            outputText = parts.join('');
+            outputChunks.push(part);
+            countChunksQueued++;
+            logInfo(`Queued output chunk #${countChunksQueued} (${part.length} chars) for sending`);
+        }
+    };
     do {
-        logInfo(`Sending request to OpenAI API with ${input.length} input entries`);
         try {
-            res = await openai.responses.create({
+            resend = false;
+            logInfo(`Sending request to OpenAI API with ${input.length} input entries`);
+            const stream = await openai.responses.create({
                 model: config.ai.chat_model,
                 input,
-                tools
+                tools,
+                stream: true
             });
+            for await (const part of stream) {
+                switch (part.type) {
+                    case 'response.output_text.delta': {
+                        outputText += part.delta;
+                        queueOutputChunks();
+                        break;
+                    }
+                    case 'response.output_item.done': {
+                        const item = part.item;
+                        outputEntries.push(item);
+                        input.push(item);
+                        // Only process function call items
+                        if (part.item.type !== 'function_call') break;
+                        let functionOutput;
+                        try {
+                            logInfo(`Model called tool ${item.name}`);
+                            const args = item.arguments ? JSON.parse(item.arguments) : {};
+                            functionOutput = await toolHandlers[item.name](args);
+                            outputText += `-# Used tool \`${item.name}\` with arguments \`${JSON.stringify(args)}\`\n\n`;
+                            queueOutputChunks();
+                            await message.channel.sendTyping();
+                        } catch (error) {
+                            logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
+                            functionOutput = `Error during tool execution: ${error.message}`;
+                        }
+                        const toolOutput = {
+                            type: 'function_call_output',
+                            call_id: item.call_id,
+                            output: functionOutput.toString()
+                        };
+                        outputEntries.push(toolOutput);
+                        input.push(toolOutput);
+                        resend = true;
+                        break;
+                    }
+                }
+            }
         } catch (error) {
             logError(`OpenAI API request failed: ${error.message}`);
             if (tries >= 3) {
                 logError(`Max retries reached, aborting interaction.`);
                 clearInterval(sendTypingInterval);
-                await sendMessage(`Error: OpenAI API request failed after multiple attempts. Please try again later.`);
+                await sendMessage(`Error: OpenAI API request failed after multiple attempts. Please try again later.`, false);
+                isResponseFinished = true;
+                channelResponding[message.channel.id] = false;
                 return;
             }
             logError(`Retrying request...`);
@@ -449,57 +529,12 @@ module.exports = async message => {
             await utils.sleep(2000);
             continue;
         }
-        outputEntries.push(...res.output);
-        input.push(...res.output);
-        // Process API output
-        for (const entry of res.output) {
-            switch (entry.type) {
-                // Handle function calls
-                case 'function_call': {
-                    let output;
-                    try {
-                        logInfo(`Model called tool ${entry.name}`);
-                        const args = entry.arguments ? JSON.parse(entry.arguments) : {};
-                        output = await toolHandlers[entry.name](args);
-                        const msg = await sendMessage(`-# Used tool \`${entry.name}\` with arguments \`${JSON.stringify(args)}\``);
-                        db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
-                            .run(msg.id, interactionId);
-                        await message.channel.sendTyping();
-                    } catch (error) {
-                        logError(`Error occurred while executing tool ${entry.name}: ${error.message}`);
-                        output = `Error during tool execution: ${error.message}`;
-                    }
-                    const toolOutput = {
-                        type: 'function_call_output',
-                        call_id: entry.call_id,
-                        output: output.toString()
-                    };
-                    outputEntries.push(toolOutput);
-                    input.push(toolOutput);
-                    resend = true;
-                    break;
-                }
-                default: {
-                    resend = false;
-                }
-            }
-        }
     } while (resend);
+    // Flush any remaining output
+    isResponseFinished = true;
+    queueOutputChunks();
     // Save interaction to database
     db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)
         .run(interactionId, Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries));
-    // Split response output into chunks and send to Discord
-    clearInterval(sendTypingInterval);
-    const parts = splitOutput(res.output_text);
-    for (let i = 0; i < parts.length; i++) {
-        logInfo(`Sending output chunk in channel ${message.channel.id}`);
-        const msg = await sendMessage(parts[i]);
-        db.prepare(`INSERT INTO interaction_messages (id, interaction_id) VALUES (?, ?)`)
-            .run(msg.id, interactionId);
-        if (i < parts.length - 1) {
-            await message.channel.sendTyping();
-        }
-        await utils.sleep(1000); // Avoid hitting rate limits
-    }
     channelResponding[message.channel.id] = false;
 };
