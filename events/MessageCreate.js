@@ -12,164 +12,6 @@ const openai = new OpenAI({
     apiKey: config.credentials.openai_api_key
 });
 
-const SPLIT_CODEBLOCKS = true;
-const SPLIT_LISTS = true;
-const SPLIT_PARAGRAPHS = true;
-const SPLIT_BY_WORD = true;
-const splitOutput = output => {
-    const MAX_CHUNK = 2000;
-    const lines = output.split('\n');
-    const chunks = [];
-    let buffer = [];
-    let inCodeBlock = false;
-    let codeLang = '';
-
-    const flushBuffer = () => {
-        if (!buffer.length) return;
-        let chunk = buffer.join('\n');
-        if (chunk.length <= MAX_CHUNK) {
-            chunks.push(chunk);
-        } else {
-            // Split further by line
-            let temp = [];
-            let currLen = 0;
-            for (let i = 0; i < buffer.length; i++) {
-                let line = buffer[i];
-                // If adding this line exceeds limit, flush temp
-                if ((currLen + line.length + 1) > MAX_CHUNK) {
-                    if (inCodeBlock && SPLIT_CODEBLOCKS) {
-                        // End code block and restart in next chunk
-                        if (temp.length && !temp[temp.length - 1].trim().startsWith('```')) {
-                            temp.push('```');
-                        }
-                        chunks.push(temp.join('\n'));
-                        // Start new code block with language
-                        temp = ['```' + codeLang];
-                        currLen = temp[0].length + 1;
-                        // If line is code block end, skip adding it
-                        if (line.trim().startsWith('```')) continue;
-                    } else {
-                        chunks.push(temp.join('\n'));
-                        temp = [];
-                        currLen = 0;
-                    }
-                }
-                temp.push(line);
-                currLen += line.length + 1;
-            }
-            if (temp.length) {
-                // If in code block, ensure code block is closed
-                if (inCodeBlock && SPLIT_CODEBLOCKS && !temp[temp.length - 1].trim().startsWith('```')) {
-                    temp.push('```');
-                }
-                chunks.push(temp.join('\n'));
-            }
-        }
-        buffer = [];
-    };
-
-    for (let i = 0; i < lines.length; i++) {
-        const line = lines[i];
-
-        // Detect code block start/end
-        if (SPLIT_CODEBLOCKS && line.trim().startsWith('```')) {
-            if (inCodeBlock) {
-                buffer.push(line);
-                flushBuffer();
-                inCodeBlock = false;
-                codeLang = '';
-            } else {
-                flushBuffer();
-                buffer.push(line);
-                // Get language if present
-                codeLang = line.trim().slice(3).trim();
-                inCodeBlock = true;
-            }
-            continue;
-        }
-
-        if (inCodeBlock) {
-            buffer.push(line);
-            continue;
-        }
-
-        // Detect list
-        if (SPLIT_LISTS && /^\s*([-*+]|\d+\.)\s+/.test(line)) {
-            if (buffer.length && !/^\s*([-*+]|\d+\.)\s+/.test(buffer[0])) {
-                flushBuffer();
-            }
-            buffer.push(line);
-            // If next line is not a list, flush buffer
-            if (!lines[i + 1] || !/^\s*([-*+]|\d+\.)\s+/.test(lines[i + 1])) {
-                flushBuffer();
-            }
-            continue;
-        }
-
-        // Paragraphs (split on blank lines)
-        if (SPLIT_PARAGRAPHS && line.trim() === '') {
-            flushBuffer();
-            continue;
-        }
-
-        buffer.push(line);
-    }
-
-    // Push any remaining buffer
-    flushBuffer();
-
-    // Final pass: if any chunk is still too long, split by word
-    const finalChunks = [];
-    for (const chunk of chunks) {
-        if (chunk.length <= MAX_CHUNK) {
-            finalChunks.push(chunk);
-        } else if (SPLIT_BY_WORD) {
-            // If code block, preserve code block markers and language
-            if (chunk.startsWith('```')) {
-                const lines = chunk.split('\n');
-                let lang = lines[0].slice(3).trim();
-                let codeLines = lines.slice(1, lines[lines.length - 1].trim() === '```' ? -1 : undefined);
-                let temp = ['```' + lang];
-                let currLen = temp[0].length + 1;
-                for (let i = 0; i < codeLines.length; i++) {
-                    let codeLine = codeLines[i];
-                    if ((currLen + codeLine.length + 1 + 3) > MAX_CHUNK) { // +3 for closing ```
-                        temp.push('```');
-                        finalChunks.push(temp.join('\n'));
-                        temp = ['```' + lang];
-                        currLen = temp[0].length + 1;
-                    }
-                    temp.push(codeLine);
-                    currLen += codeLine.length + 1;
-                }
-                if (temp.length > 1) {
-                    temp.push('```');
-                    finalChunks.push(temp.join('\n'));
-                }
-            } else {
-                // Split by word
-                let words = chunk.split(' ');
-                let temp = [];
-                let currLen = 0;
-                for (let word of words) {
-                    if ((currLen + word.length + 1) > MAX_CHUNK) {
-                        finalChunks.push(temp.join(' '));
-                        temp = [];
-                        currLen = 0;
-                    }
-                    temp.push(word);
-                    currLen += word.length + 1;
-                }
-                if (temp.length) finalChunks.push(temp.join(' '));
-            }
-        } else {
-            finalChunks.push(chunk);
-        }
-    }
-
-    return finalChunks;
-};
-
 const getUserName = async (userId, guild, includeId = false) => {
     if (guild) {
         let member = guild.members.cache.get(userId);
@@ -406,7 +248,7 @@ module.exports = async message => {
                 ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
                 : `Channel: DM with ${message.author.globalName || message.author.username}`,
             '',
-            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables and embedded images, as well as LaTeX expressions, are not supported, so do not use them in your responses.`,
+            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables, embedded images, horizontal rules, and LaTeX expressions are not supported. Do not use them in your responses.`,
             '',
             `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed (using Whisper for audio) and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
             '',
@@ -437,33 +279,36 @@ module.exports = async message => {
     let countChunksSent = 0;
     // Interval to send output chunks
     const outputChunks = [];
-    const sendOutputInterval = setInterval(async () => {
-        if (outputChunks.length == 0 && isResponseFinished) {
-            clearInterval(sendOutputInterval);
-            return;
+    const sendNextOutputChunk = async () => {
+        if (outputChunks.length > 0) {
+            clearInterval(sendTypingInterval);
+            // Get and send the next output chunk
+            const chunk = outputChunks.shift();
+            logInfo(`Sending output chunk #${countChunksSent + 1} in channel ${message.channel.id}`);
+            await sendMessage(chunk);
+            countChunksSent++;
+            // If there are more chunks to send, keep typing
+            if (!isResponseFinished || outputChunks.length > 0) {
+                await message.channel.sendTyping();
+            }
         }
-        if (outputChunks.length == 0) return;
-        clearInterval(sendTypingInterval);
-        // Get and send the next output chunk
-        const part = outputChunks.shift();
-        logInfo(`Sending output chunk #${countChunksSent + 1} in channel ${message.channel.id}`);
-        await sendMessage(part);
-        countChunksSent++;
-        // If there are more chunks to send, keep typing
-        if (!isResponseFinished || outputChunks.length > 0) {
-            message.channel.sendTyping();
+        if (outputChunks.length > 0 || !isResponseFinished) {
+            setTimeout(() => {
+                sendNextOutputChunk();
+            }, 1000);
         }
-    }, 1000);
+    };
+    sendNextOutputChunk();
     // Split response output into chunks and queue sending
     const queueOutputChunks = () => {
-        const parts = splitOutput(outputText);
-        if (!isResponseFinished && parts.length === 1) return;
-        while (parts.length > 0) {
-            const part = parts.shift();
-            outputText = parts.join('');
-            outputChunks.push(part);
+        const chunks = require('../markdownSplitter')(outputText);
+        for (let i = countChunksQueued; i < chunks.length; i++) {
+            const partsLeft = chunks.length - i;
+            if (!isResponseFinished && partsLeft < 3) return;
+            const chunk = chunks[i];
+            outputChunks.push(chunk);
             countChunksQueued++;
-            logInfo(`Queued output chunk #${countChunksQueued} (${part.length} chars) for sending`);
+            logInfo(`Queued output chunk #${countChunksQueued} (${chunk.length} chars) for sending`);
         }
     };
     do {
