@@ -38,6 +38,11 @@ db.prepare(`CREATE TABLE IF NOT EXISTS user_access (
     can_access INTEGER NOT NULL
 )`).run();
 
+db.prepare(`CREATE TABLE IF NOT EXISTS knowledge (
+    user_id TEXT NOT NULL PRIMARY KEY,
+    knowledge TEXT NOT NULL
+)`).run();
+
 db.pragma('journal_mode = WAL');
 
 module.exports = db;

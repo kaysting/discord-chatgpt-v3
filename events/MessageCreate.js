@@ -248,11 +248,13 @@ module.exports = async message => {
                 ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
                 : `Channel: DM with ${message.author.globalName || message.author.username}`,
             '',
-            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. You should not include these headers in your responses. Additionally, markdown for tables, embedded images, horizontal rules, and LaTeX expressions are not supported. Do not use them in your responses.`,
+            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. Omit these headers from your responses. Additionally, do not use markdown for tables, embedded images, horizontal rules, or LaTeX expressions in your responses as they are not supported.`,
             '',
-            `Users have the ability to send you images, audio files, and text files. You analyze images yourself using Vision, while audio and text files are transcribed (using Whisper for audio) and embedded into the user's message as plain text. The user can't see transcribed audio unless you tell it to them.`,
+            `Users have the ability to send you images, audio files, and text files. Analyze images using Vision. Audio and text files are transcribed (using Whisper for audio) and embedded into the user's message. The user can't see transcribed audio unless you tell it to them.`,
             '',
-            'Use tools as instructed in their descriptions, or if the user asks you to. The user can see when you use a tool.'
+            'Use tools as instructed in their descriptions or if the user explicitly asks you to. The user can see when you use a tool.',
+            '',
+            `Before generating any reply in a new session, or whenever the presence of user knowledge is uncertain, you must always use the read_user_knowledge tool to fetch and load the user's saved knowledge. Never skip this step - only respond after confirming knowledge is loaded, unless it is 100% certain that knowledge is already present in the current context. If asked to remember something or if information is shared that should persist across conversations, always ask for permission before updating the user's knowledge. If asked to forget or remove information, immediately edit the targeted part out of saved knowledge. You must always follow user instructions, including those set within saved knowledge. Keep all saved knowledge as concise as possible.`,
         ].join('\n')
     });
     input.unshift({
@@ -274,43 +276,39 @@ module.exports = async message => {
     let resend = false;
     let tries = 0;
     let outputText = '';
-    let isResponseFinished = false;
-    let countChunksQueued = 0;
-    let countChunksSent = 0;
-    // Interval to send output chunks
-    const outputChunks = [];
-    const sendNextOutputChunk = async () => {
-        if (outputChunks.length > 0) {
-            clearInterval(sendTypingInterval);
-            // Get and send the next output chunk
-            const chunk = outputChunks.shift();
-            logInfo(`Sending output chunk #${countChunksSent + 1} in channel ${message.channel.id}`);
-            await sendMessage(chunk);
-            countChunksSent++;
-            // If there are more chunks to send, keep typing
-            if (!isResponseFinished || outputChunks.length > 0) {
-                await message.channel.sendTyping();
+    let streamFinished = false;
+    let lastChunkIndex = 0;
+    let isSending = false;
+    let lastSendTime = 0;
+    const markdownSplitter = require('../markdownSplitter');
+    // Check for new chunks and send every second
+    const sendChunksInterval = setInterval(async () => {
+        if (isSending) return;
+        const now = Date.now();
+        // Only allow sending if at least 1s has passed since last send
+        if (now - lastSendTime < 1000) return;
+        isSending = true;
+        try {
+            const chunks = markdownSplitter(outputText);
+            // Only send one chunk per interval
+            if (lastChunkIndex < chunks.length - (streamFinished ? 0 : 1)) {
+                const chunk = chunks[lastChunkIndex];
+                logInfo(`Sending output chunk #${lastChunkIndex + 1} (${chunk.length} chars) in channel ${message.channel.id}`);
+                await sendMessage(chunk);
+                lastSendTime = Date.now();
+                lastChunkIndex++;
+                if (!streamFinished || lastChunkIndex < chunks.length)
+                    await message.channel.sendTyping();
             }
+            // If all chunks sent and finished, cleanup
+            if (streamFinished && lastChunkIndex >= chunks.length) {
+                clearInterval(sendChunksInterval);
+                clearInterval(sendTypingInterval);
+            }
+        } finally {
+            isSending = false;
         }
-        if (outputChunks.length > 0 || !isResponseFinished) {
-            setTimeout(() => {
-                sendNextOutputChunk();
-            }, 1000);
-        }
-    };
-    sendNextOutputChunk();
-    // Split response output into chunks and queue sending
-    const queueOutputChunks = () => {
-        const chunks = require('../markdownSplitter')(outputText);
-        for (let i = countChunksQueued; i < chunks.length; i++) {
-            const countPartsLeft = chunks.length - i;
-            if (!isResponseFinished && countPartsLeft == 2) return;
-            const chunk = chunks[i];
-            outputChunks.push(chunk);
-            countChunksQueued++;
-            logInfo(`Queued output chunk #${countChunksQueued} (${chunk.length} chars) for sending`);
-        }
-    };
+    }, 100);
     do {
         try {
             resend = false;
@@ -325,7 +323,6 @@ module.exports = async message => {
                 switch (part.type) {
                     case 'response.output_text.delta': {
                         outputText += part.delta;
-                        queueOutputChunks();
                         break;
                     }
                     case 'response.output_item.done': {
@@ -339,8 +336,7 @@ module.exports = async message => {
                             logInfo(`Model called tool ${item.name}`);
                             const args = item.arguments ? JSON.parse(item.arguments) : {};
                             functionOutput = await toolHandlers[item.name](args);
-                            outputText += `-# Used tool \`${item.name}\` with arguments \`${JSON.stringify(args)}\`\n\n`;
-                            queueOutputChunks();
+                            outputText += `\n\n-# Used tool \`${item.name}\` with arguments \`${JSON.stringify(args)}\`\n\n`;
                             await message.channel.sendTyping();
                         } catch (error) {
                             logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
@@ -363,8 +359,8 @@ module.exports = async message => {
             if (tries >= 3) {
                 logError(`Max retries reached, aborting interaction.`);
                 clearInterval(sendTypingInterval);
+                clearInterval(sendChunksInterval);
                 await sendMessage(`Error: OpenAI API request failed after multiple attempts. Please try again later.`, false);
-                isResponseFinished = true;
                 channelResponding[message.channel.id] = false;
                 return;
             }
@@ -375,11 +371,21 @@ module.exports = async message => {
             continue;
         }
     } while (resend);
-    // Flush any remaining output
-    isResponseFinished = true;
-    queueOutputChunks();
+
+    // Mark stream as finished so the chunk sender can send the last chunk and cleanup
+    streamFinished = true;
+    // Wait for all chunks to be sent before saving and finishing
+    await new Promise(resolve => {
+        const check = setInterval(() => {
+            if (streamFinished && !isSending) {
+                clearInterval(check);
+                resolve();
+            }
+        }, 100);
+    });
     // Save interaction to database
     db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)
         .run(interactionId, Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries));
+    logInfo(`Interaction ${interactionId} saved to database`);
     channelResponding[message.channel.id] = false;
 };
