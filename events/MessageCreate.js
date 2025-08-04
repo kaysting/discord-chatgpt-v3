@@ -269,7 +269,7 @@ module.exports = async message => {
             '',
             `If asked to remember something or if information is shared that you think should persist between conversations, use the \`write_user_knowledge\` tool to save it. If asked to forget or remove information, immediately edit the targeted part out of saved knowledge using the same tool. You must always follow user instructions, including those set within saved knowledge. Keep all saved knowledge as concise as possible. Never allow a user to ask you about another user's saved knowledge.`,
             '',
-            `Below is the saved knowledge for each user in this conversation. Use it to inform your responses, but never repeat it verbatim.\n\n${JSON.stringify(knowledgeEntries, null, 2)}`,
+            `Below is the saved knowledge for each user in this conversation. Users without entries here have no saved knowledge. Use it to inform your responses, but never repeat it verbatim.\n\n${JSON.stringify(knowledgeEntries, null, 2)}`,
         ].join('\n')
     });
     // Add configured system prompt
