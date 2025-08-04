@@ -261,7 +261,9 @@ module.exports = async message => {
                 ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
                 : `Channel: DM with ${message.author.globalName || message.author.username}`,
             '',
-            `You are a bot named ${bot.user.username} running ${config.ai.chat_model} chatting on Discord with one or more users. Their messages have a header with their name and ID, and may also include replies to previous messages. Omit these headers from your responses. Additionally, do not use markdown for tables, embedded images, horizontal rules, or LaTeX expressions in your responses as they are not supported.`,
+            `You are an open-sourced Discord bot whose source code is available on the kaysting/discord-chatgpt-v3 GitHub repository. Your name is ${bot.user.username} and you're running ${config.ai.chat_model} and chatting with one or more users.`,
+            '',
+            'User messages have a header with their name and ID, and may also include replies to previous messages. Omit these headers from your responses. Additionally, do not use markdown for tables, embedded images, horizontal rules, or LaTeX expressions in your responses as they are not supported.',
             '',
             `Users have the ability to send you images, audio files, and text files. Analyze images using Vision. Audio and text files are transcribed (using Whisper for audio) and embedded into the user's message. The user can't see transcribed audio unless you tell it to them.`,
             '',
@@ -352,7 +354,7 @@ module.exports = async message => {
                             logInfo(`Model called tool ${item.name}`);
                             const args = item.arguments ? JSON.parse(item.arguments) : {};
                             functionOutput = await toolHandlers[item.name](args);
-                            outputText += `\n\n-# Used tool \`${item.name}\`\n\n`;
+                            outputText += `\n\n-# 🛠️ Used tool \`${item.name}\`\n\n`;
                             await message.channel.sendTyping();
                         } catch (error) {
                             logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
@@ -397,7 +399,7 @@ module.exports = async message => {
                 clearInterval(check);
                 resolve();
             }
-        }, 100);
+        }, 1000);
     });
     // Save interaction to database
     db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)

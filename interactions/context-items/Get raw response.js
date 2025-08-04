@@ -29,16 +29,20 @@ module.exports = {
         await interaction.deferReply({ flags: Discord.MessageFlags.Ephemeral });
         const outputEntries = JSON.parse(json);
         let content = '';
+        console.log(outputEntries);
         for (const entry of outputEntries) {
+            if (entry.type === 'function_call') {
+                content += `\n\n[Used tool \`${entry.name}\`]`;
+            }
             if (entry.type === 'message') {
                 for (const part of entry.content) {
-                    if (part.type === 'output_text' && part.text) {
-                        content = part.text;
-                        break;
+                    if (part.text) {
+                        content += `\n\n${part.text}`;
                     }
                 }
             }
         }
+        content = content.trim();
         const attachment = new Discord.AttachmentBuilder(Buffer.from(content), {
             name: `response.md`
         });
