@@ -29,7 +29,6 @@ module.exports = {
         await interaction.deferReply({ flags: Discord.MessageFlags.Ephemeral });
         const outputEntries = JSON.parse(json);
         let content = '';
-        console.log(outputEntries);
         for (const entry of outputEntries) {
             if (entry.type === 'function_call') {
                 content += `\n\n[Used tool \`${entry.name}\`]`;

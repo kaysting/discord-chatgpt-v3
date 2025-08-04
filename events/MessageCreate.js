@@ -308,10 +308,14 @@ module.exports = async message => {
         isSending = true;
         try {
             const chunks = markdownSplitter(outputText);
+            // Clear typing interval before sending remaining chunks
+            if (streamFinished) {
+                clearInterval(sendTypingInterval);
+            }
             // Only send one chunk per interval
             if (lastChunkIndex < chunks.length - (streamFinished ? 0 : 1)) {
                 const chunk = chunks[lastChunkIndex];
-                logInfo(`Sending output chunk #${lastChunkIndex + 1} (${chunk.length} chars) in channel ${message.channel.id}`);
+                logInfo(`Sending output chunk ${lastChunkIndex + 1}/${chunks.length} (${chunk.length} chars) in channel ${message.channel.id}`);
                 await sendMessage(chunk);
                 lastSendTime = Date.now();
                 lastChunkIndex++;
@@ -321,7 +325,6 @@ module.exports = async message => {
             // If all chunks sent and finished, cleanup
             if (streamFinished && lastChunkIndex >= chunks.length) {
                 clearInterval(sendChunksInterval);
-                clearInterval(sendTypingInterval);
             }
         } finally {
             isSending = false;
@@ -389,21 +392,10 @@ module.exports = async message => {
             continue;
         }
     } while (resend);
-
-    // Mark stream as finished so the chunk sender can send the last chunk and cleanup
+    // Mark stream as finished so remaining chunks can be sent
     streamFinished = true;
-    // Wait for all chunks to be sent before saving and finishing
-    await new Promise(resolve => {
-        const check = setInterval(() => {
-            if (streamFinished && !isSending) {
-                clearInterval(check);
-                resolve();
-            }
-        }, 1000);
-    });
     // Save interaction to database
     db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)
         .run(interactionId, Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries));
-    logInfo(`Interaction ${interactionId} saved to database`);
     channelResponding[message.channel.id] = false;
 };

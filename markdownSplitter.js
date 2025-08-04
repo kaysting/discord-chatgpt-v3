@@ -1,7 +1,7 @@
 /**
  * Splits a markdown-formatted string into an array of chunks, each with a maximum length.
  * This function processes the markdown line-by-line, creating chunks from logical blocks
- * (a single paragraph line, a whole list, or a whole code block). It does NOT
+ * (a multi-line paragraph, a whole list, or a whole code block). It does NOT
  * combine separate blocks into a single chunk.
  *
  * @param {string} markdown The input string of markdown text.
@@ -35,14 +35,14 @@ function splitMarkdown(markdown, maxLength = 2000) {
             block = lines.slice(i, endOfListIndex + 1).join('\n');
             i = endOfListIndex + 1;
         }
-        // Otherwise, it's a single paragraph line
+        // Otherwise, it's a paragraph block that might span multiple lines
         else {
-            block = line;
-            i++;
+            const endOfParagraphIndex = findEndOfParagraph(lines, i);
+            block = lines.slice(i, endOfParagraphIndex + 1).join('\n');
+            i = endOfParagraphIndex + 1;
         }
 
         // Add the assembled block to the chunks array.
-        // This function no longer tries to "pack" blocks together.
         addBlockAsChunk(block, chunks, maxLength);
     }
 
@@ -87,6 +87,38 @@ function findEndOfList(lines, startIndex) {
         if (nextLine.trim() === '' || !/^(?:\s*[*+-]|\s*\d+\.)\s/.test(nextLine)) {
             return i;
         }
+        i++;
+    }
+    return i;
+}
+
+/**
+ * Helper to find the end of a paragraph block.
+ * A paragraph block is now defined as consecutive lines where each line (except the last)
+ * ends with two spaces, indicating a hard line break.
+ * @param {string[]} lines The array of all lines.
+ * @param {number} startIndex The starting index to check from.
+ * @returns {number} The index of the last line in the paragraph.
+ */
+function findEndOfParagraph(lines, startIndex) {
+    let i = startIndex;
+    while (i + 1 < lines.length) {
+        const currentLine = lines[i];
+        const nextLine = lines[i + 1];
+
+        // A paragraph block continues only if the current line ends with two spaces.
+        if (!currentLine.endsWith('  ')) {
+            return i;
+        }
+
+        // The block also ends if the next line starts a different block type.
+        if (nextLine.trim() === '' ||
+            /^(?:\s*[*+-]|\s*\d+\.)\s/.test(nextLine) ||
+            nextLine.startsWith('```') ||
+            /^(?:---|\*\*\*|___)\s*$/.test(nextLine)) {
+            return i;
+        }
+
         i++;
     }
     return i;
