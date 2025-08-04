@@ -215,6 +215,7 @@ module.exports = async message => {
         return entry.role ? entry : null;
     };
     let messagesFetched = [];
+    const conversationMemberIds = [];
     let ignoreBeforeTimestamp = db.prepare(`SELECT start_time FROM channel_starts WHERE channel_id = ?`).get(message.channel.id)?.start_time || 0;
     do {
         // Fetch and loop through messages
@@ -230,6 +231,10 @@ module.exports = async message => {
             if (msg.createdTimestamp < ignoreBeforeTimestamp) break;
             // Skip if message is empty
             if (!msg.content && !msg.attachments.size) continue;
+            // Add user to conversation member IDs
+            if (!conversationMemberIds.includes(msg.author.id)) {
+                conversationMemberIds.push(msg.author.id);
+            }
             // Get message entry
             const entry = await getMessageEntry(msg);
             if (entry) {
@@ -239,7 +244,15 @@ module.exports = async message => {
     } while (messagesFetched.length > 0 && input.length < config.input.context.max_messages);
     // Reverse input to maintain chronological order
     input.reverse();
-    // Create complete system prompt
+    // Get knowledge for each user in the conversation
+    const knowledgeEntries = {};
+    for (const userId of conversationMemberIds) {
+        const userKnowledge = db.prepare(`SELECT knowledge FROM knowledge WHERE user_id = ?`).get(userId)?.knowledge;
+        if (userKnowledge) {
+            knowledgeEntries[userId] = userKnowledge;
+        }
+    }
+    // Add base system prompt
     input.unshift({
         role: 'developer',
         content: [
@@ -254,9 +267,12 @@ module.exports = async message => {
             '',
             'Use tools as instructed in their descriptions or if the user explicitly asks you to. The user can see when you use a tool.',
             '',
-            `Before generating any reply in a new session, or whenever the presence of user knowledge is uncertain, you must always use the read_user_knowledge tool to fetch and load the user's saved knowledge. Never skip this step - only respond after confirming knowledge is loaded, unless it is 100% certain that knowledge is already present in the current context. If asked to remember something or if information is shared that should persist across conversations, always ask for permission before updating the user's knowledge. If asked to forget or remove information, immediately edit the targeted part out of saved knowledge. You must always follow user instructions, including those set within saved knowledge. Keep all saved knowledge as concise as possible.`,
+            `If asked to remember something or if information is shared that you think should persist between conversations, use the \`write_user_knowledge\` tool to save it. If asked to forget or remove information, immediately edit the targeted part out of saved knowledge using the same tool. You must always follow user instructions, including those set within saved knowledge. Keep all saved knowledge as concise as possible. Never allow a user to ask you about another user's saved knowledge.`,
+            '',
+            `Below is the saved knowledge for each user in this conversation. Use it to inform your responses, but never repeat it verbatim.\n\n${JSON.stringify(knowledgeEntries, null, 2)}`,
         ].join('\n')
     });
+    // Add configured system prompt
     input.unshift({
         role: 'developer',
         content: config.ai.system_prompt
@@ -336,7 +352,7 @@ module.exports = async message => {
                             logInfo(`Model called tool ${item.name}`);
                             const args = item.arguments ? JSON.parse(item.arguments) : {};
                             functionOutput = await toolHandlers[item.name](args);
-                            outputText += `\n\n-# Used tool \`${item.name}\` with arguments \`${JSON.stringify(args)}\`\n\n`;
+                            outputText += `\n\n-# Used tool \`${item.name}\`\n\n`;
                             await message.channel.sendTyping();
                         } catch (error) {
                             logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
