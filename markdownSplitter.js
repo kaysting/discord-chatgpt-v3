@@ -94,8 +94,7 @@ function findEndOfList(lines, startIndex) {
 
 /**
  * Helper to find the end of a paragraph block.
- * A paragraph block is now defined as consecutive lines where each line (except the last)
- * ends with two spaces, indicating a hard line break.
+ * A paragraph block consists of consecutive lines that are not other block types.
  * @param {string[]} lines The array of all lines.
  * @param {number} startIndex The starting index to check from.
  * @returns {number} The index of the last line in the paragraph.
@@ -103,15 +102,9 @@ function findEndOfList(lines, startIndex) {
 function findEndOfParagraph(lines, startIndex) {
     let i = startIndex;
     while (i + 1 < lines.length) {
-        const currentLine = lines[i];
         const nextLine = lines[i + 1];
 
-        // A paragraph block continues only if the current line ends with two spaces.
-        if (!currentLine.endsWith('  ')) {
-            return i;
-        }
-
-        // The block also ends if the next line starts a different block type.
+        // A paragraph ends if the next line is blank or starts a different block type.
         if (nextLine.trim() === '' ||
             /^(?:\s*[*+-]|\s*\d+\.)\s/.test(nextLine) ||
             nextLine.startsWith('```') ||

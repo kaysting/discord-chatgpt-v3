@@ -5,6 +5,7 @@ const bot = require('../bot.js');
 const db = require('../db.js');
 const utils = require('../utils.js');
 const config = require('../config.json');
+const splitMarkdown = require('../markdownSplitter');
 
 const { logInfo, logWarn, logError } = utils;
 
@@ -46,6 +47,8 @@ module.exports = async message => {
         });
     }
     channelResponding[message.channel.id] = true;
+    // Log interaction start
+    logInfo(`${message.author.tag} started an interaction in channel ${message.channel.id}`);
     // Function to send message
     // Reply to the last associated message if something has been sent since
     let lastAssociatedMessage = message;
@@ -281,12 +284,11 @@ module.exports = async message => {
     let resend = false;
     let tries = 0;
     let outputText = '';
-    let streamFinished = false;
+    let isStreamFinished = false;
     let lastChunkIndex = 0;
     let isSending = false;
-    let isResponseFinished = false;
+    let areAllChunksSent = false;
     let lastSendTime = 0;
-    const markdownSplitter = require('../markdownSplitter');
     // Check for new chunks and send every second
     const sendChunksInterval = setInterval(async () => {
         if (isSending) return;
@@ -295,25 +297,25 @@ module.exports = async message => {
         if (now - lastSendTime < 1000) return;
         isSending = true;
         try {
-            const chunks = markdownSplitter(outputText);
+            const chunks = splitMarkdown(outputText);
             // Clear typing interval before sending remaining chunks
-            if (streamFinished) {
+            if (isStreamFinished) {
                 clearInterval(sendTypingInterval);
             }
             // Only send one chunk per interval
-            if (lastChunkIndex < chunks.length - (streamFinished ? 0 : 1)) {
+            if (lastChunkIndex < chunks.length - (isStreamFinished ? 0 : 1)) {
                 const chunk = chunks[lastChunkIndex];
                 logInfo(`Sending output chunk ${lastChunkIndex + 1}/${chunks.length} (${chunk.length} chars) in channel ${message.channel.id}`);
                 await sendMessage(chunk);
                 lastSendTime = Date.now();
                 lastChunkIndex++;
-                if (!streamFinished || lastChunkIndex < chunks.length)
+                if (!isStreamFinished || lastChunkIndex < chunks.length)
                     await message.channel.sendTyping();
             }
             // If all chunks sent and finished, cleanup
-            if (streamFinished && lastChunkIndex >= chunks.length) {
+            if (isStreamFinished && lastChunkIndex >= chunks.length) {
                 clearInterval(sendChunksInterval);
-                isResponseFinished = true;
+                areAllChunksSent = true;
             }
         } finally {
             isSending = false;
@@ -381,11 +383,11 @@ module.exports = async message => {
             continue;
         }
     } while (resend);
-    // Mark stream as finished so remaining chunks can be sent
-    streamFinished = true;
+    // Mark stream as finished and wait for all chunks to be sent
+    isStreamFinished = true;
     await new Promise(resolve => {
         const checkInterval = setInterval(() => {
-            if (isResponseFinished) {
+            if (areAllChunksSent) {
                 clearInterval(checkInterval);
                 resolve();
             }
