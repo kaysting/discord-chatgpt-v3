@@ -12,35 +12,12 @@ const openai = new OpenAI({
     apiKey: config.credentials.openai_api_key
 });
 
-const getUserName = async (userId, guild, includeId = false) => {
-    if (guild) {
-        let member = guild.members.cache.get(userId);
-        if (!member) {
-            try {
-                member = await guild.members.fetch(userId);
-            } catch {
-                member = null;
-            }
-        }
-        return member ? (member.nickname || member.user.globalName || member.user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
-    } else {
-        let user = bot.users.cache.get(userId);
-        if (!user) {
-            try {
-                user = await bot.users.fetch(userId);
-            } catch {
-                user = null;
-            }
-        }
-        return user ? (user.globalName || user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
-    }
-};
-
 const channelLastMsg = {};
 const channelResponding = {};
 
 module.exports = async message => {
     channelLastMsg[message.channel.id] = message;
+    const startTime = Date.now();
     // Check if message should be processed
     if (message.author.bot) return;
     const isChannelDm = message.channel.type === Discord.ChannelType.DM;
@@ -115,30 +92,40 @@ module.exports = async message => {
                 }
             }
         } else {
-            // Get referenced message if this is a reply
-            let reference = '';
-            if (msg.reference && msg.reference.messageId) {
-                const referencedMsg = await message.channel.messages.fetch(msg.reference.messageId).catch(() => null);
-                if (referencedMsg) {
-                    const refName = await getUserName(referencedMsg.author.id, referencedMsg.guild, true);
-                    const content = (referencedMsg.content + '\n' + referencedMsg.attachments.map(att => `[${att.name}]`).join(', ')).trim();
-                    reference = `Replying to ${refName} (Message ID ${referencedMsg.id}) - ${utils.prettyTimestamp(referencedMsg.createdTimestamp)}:\n> ${content.split('\n').join('\n> ')}`;
+            const formatMessageContent = async (msg, isReference = false) => {
+                const name = await utils.getUserName(msg.author.id, msg.guild, true);
+                // Replace user and channel mentions with their names in content
+                let content = await utils.replaceAsync(msg.content, /<@!?(\d+)>/g, async (match, userId) => {
+                    const uname = await utils.getUserName(userId, msg.guild);
+                    return `@${uname}`;
+                });
+                content = content.replace(/<#(\d+)>/g, (match, channelId) => {
+                    const channel = msg.guild ? msg.guild.channels.cache.get(channelId) : null;
+                    return channel ? `#${channel.name}` : match;
+                });
+                if (isReference && msg.attachments.size > 0) {
+                    content += '\n' + Array.from(msg.attachments.values()).map(att => `[${att.name}]`).join(', ');
                 }
-            }
-            // Replace user and channel mentions with their names in content
-            let content = await utils.replaceAsync(msg.content, /<@!?(\d+)>/g, async (match, userId) => {
-                const uname = await getUserName(userId, msg.guild);
-                return `@${uname}`;
-            });
-            content = content.replace(/<#(\d+)>/g, (match, channelId) => {
-                const channel = msg.guild ? msg.guild.channels.cache.get(channelId) : null;
-                return channel ? `#${channel.name}` : match;
-            });
+                content = content.trim();
+                let result;
+                if (isReference) {
+                    result = `Replying to ${name} (Message ID: ${msg.id}) - ${utils.prettyTimestamp(msg.createdTimestamp)}:\n> ${content.split('\n').join('\n> ')}`;
+                } else {
+                    result = `${name} (Message ID: ${msg.id}) - ${utils.prettyTimestamp(msg.createdTimestamp)}:\n${content}`;
+                    if (msg.reference && msg.reference.messageId) {
+                        const referencedMsg = await msg.channel.messages.fetch(msg.reference.messageId).catch(() => null);
+                        if (referencedMsg) {
+                            const refContent = await formatMessageContent(referencedMsg, true);
+                            result = `${refContent}\n\n${result}`.trim();
+                        }
+                    }
+                }
+                return result;
+            };
             // Format user message
-            const name = await getUserName(msg.author.id, msg.guild, true);
             entry.role = 'user';
             entry.content = [{
-                type: 'input_text', text: `${reference}\n\n${name} (Message ID: ${msg.id}) - ${utils.prettyTimestamp(msg.createdTimestamp)}:\n${content}`.trim()
+                type: 'input_text', text: await formatMessageContent(msg)
             }];
             // Add attachments
             for (const attachment of msg.attachments.values()) {
@@ -175,17 +162,17 @@ module.exports = async message => {
                                 db.prepare(`INSERT OR REPLACE INTO audio_transcriptions (file_hash, transcription) VALUES (?, ?)`)
                                     .run(audioFileHash, transcription);
                             } catch (error) {
-                                logError(`Failed to transcribe ${name}: ${error}`);
+                                logError(`Failed to transcribe audio file ${name}: ${error.message}`);
                             }
                         }
                     }
                     if (transcription) {
                         entry.content.push({
-                            type: 'input_text', text: `Contents of attached audio file "${name}":\n${transcription}`
+                            type: 'input_text', text: `Attached "${name}":\n${transcription}`
                         });
                     } else {
                         entry.content.push({
-                            type: 'input_text', text: `Contents of attached audio file failed: "${name}".`
+                            type: 'input_text', text: `Attached "${name}": No transcription.`
                         });
                     }
                 } else if (config.input.text_files.enabled && size <= config.input.text_files.max_bytes) {
@@ -195,19 +182,19 @@ module.exports = async message => {
                         const textContent = fs.readFileSync(textFilePath, 'utf8');
                         entry.content.push({
                             type: 'input_text',
-                            text: `Content of attached text file "${name}":\n${textContent}`
+                            text: `Attached "${name}":\n${textContent}`
                         });
                     } else {
                         entry.content.push({
                             type: 'input_text',
-                            text: `Invalid file attachment: "${name}"`
+                            text: `Attached "${name}": Invalid file attachment.`
                         });
                     }
                 } else {
                     // Still mention other attachments even if not processed
                     entry.content.push({
                         type: 'input_text',
-                        text: `Invalid file attachment: "${name}"`
+                        text: `Attached "${name}": Invalid file attachment.`
                     });
                 }
             }
@@ -244,12 +231,12 @@ module.exports = async message => {
     } while (messagesFetched.length > 0 && input.length < config.input.context.max_messages);
     // Reverse input to maintain chronological order
     input.reverse();
-    // Get knowledge for each user in the conversation
-    const knowledgeEntries = {};
+    // Get memory for each user in the conversation
+    const memoryEntries = {};
     for (const userId of conversationMemberIds) {
-        const userKnowledge = db.prepare(`SELECT knowledge FROM knowledge WHERE user_id = ?`).get(userId)?.knowledge;
-        if (userKnowledge) {
-            knowledgeEntries[userId] = userKnowledge;
+        const userMemory = db.prepare(`SELECT memory FROM user_memory WHERE user_id = ?`).get(userId)?.memory;
+        if (userMemory) {
+            memoryEntries[userId] = userMemory;
         }
     }
     // Add base system prompt
@@ -261,17 +248,17 @@ module.exports = async message => {
                 ? `Server: ${message.guild.name}\nChannel: #${message.channel.name}`
                 : `Channel: DM with ${message.author.globalName || message.author.username}`,
             '',
-            `You are an open-sourced Discord bot whose source code is available on the kaysting/discord-chatgpt-v3 GitHub repository. Your name is ${bot.user.username} and you're running ${config.ai.chat_model} and chatting with one or more users.`,
+            `You are an open-sourced Discord bot whose source code is available on the kaysting/discord-chatgpt-v3 GitHub repository. Your name is ${bot.user.username} and you're running ${config.ai.chat_model} and chatting with one or more users. You can read up to ${config.input.context.max_messages} messages back in this channel.`,
             '',
             'User messages have a header with their name and ID, and may also include replies to previous messages. Omit these headers from your responses. Additionally, do not use markdown for tables, embedded images, horizontal rules, or LaTeX expressions in your responses as they are not supported.',
             '',
-            `Users have the ability to send you images, audio files, and text files. Analyze images using Vision. Audio and text files are transcribed (using Whisper for audio) and embedded into the user's message. The user can't see transcribed audio unless you tell it to them.`,
+            `Users have the ability to send you images, audio files, and text files. Analyze images using Vision. Audio and text files are transcribed (using ${config.ai.transcription_model} for audio) and embedded into the user's message. The user can't see transcribed audio unless you tell it to them.`,
             '',
             'Use tools as instructed in their descriptions or if the user explicitly asks you to. The user can see when you use a tool.',
             '',
-            `If asked to remember something or if information is shared that you think should persist between conversations, use the \`write_user_knowledge\` tool to save it. If asked to forget or remove information, immediately edit the targeted part out of saved knowledge using the same tool. You must always follow user instructions, including those set within saved knowledge. Keep all saved knowledge as concise as possible. Never allow a user to ask you about another user's saved knowledge.`,
+            `If asked to remember something or if information is shared that you think should persist between conversations, use the \`write_user_memory\` tool to save it. If asked to forget or remove information, immediately edit the targeted part out of saved memory using the same tool. You must always follow user instructions, including those set within saved memory. Keep all saved memory as concise as possible. Never allow a user to ask you about another user's saved memory. Users can also use the \`/memory edit\` and \`/memory clear\` commands to manually manage their saved memory.`,
             '',
-            `Below is the saved knowledge for each user in this conversation. Users without entries here have no saved knowledge. Use it to inform your responses, but never repeat it verbatim.\n\n${JSON.stringify(knowledgeEntries, null, 2)}`,
+            `Below is the saved memory for each user in this conversation. Users without entries here have no saved memory. Use it to inform your responses, but never repeat it verbatim.\n\n${JSON.stringify(memoryEntries, null, 2)}`,
         ].join('\n')
     });
     // Add configured system prompt
@@ -297,6 +284,7 @@ module.exports = async message => {
     let streamFinished = false;
     let lastChunkIndex = 0;
     let isSending = false;
+    let isResponseFinished = false;
     let lastSendTime = 0;
     const markdownSplitter = require('../markdownSplitter');
     // Check for new chunks and send every second
@@ -325,6 +313,7 @@ module.exports = async message => {
             // If all chunks sent and finished, cleanup
             if (streamFinished && lastChunkIndex >= chunks.length) {
                 clearInterval(sendChunksInterval);
+                isResponseFinished = true;
             }
         } finally {
             isSending = false;
@@ -394,8 +383,17 @@ module.exports = async message => {
     } while (resend);
     // Mark stream as finished so remaining chunks can be sent
     streamFinished = true;
+    await new Promise(resolve => {
+        const checkInterval = setInterval(() => {
+            if (isResponseFinished) {
+                clearInterval(checkInterval);
+                resolve();
+            }
+        }, 100);
+    });
     // Save interaction to database
     db.prepare(`INSERT INTO interactions (prompt_message_id, time_created, user_id, channel_id, guild_id, output_entries) VALUES (?, ?, ?, ?, ?, ?)`)
         .run(interactionId, Date.now(), message.author.id, message.channel.id, message.guild ? message.guild.id : null, JSON.stringify(outputEntries));
+    logInfo(`Interaction saved with ID ${interactionId}`);
     channelResponding[message.channel.id] = false;
 };

@@ -1,8 +1,14 @@
 const fs = require('fs');
 const Discord = require('discord.js');
+const bot = require('./bot');
+const utils = require('./utils');
 const config = require('./config.json');
 
 (async () => {
+    // Wait for bot to log in
+    await new Promise(resolve => {
+        bot.once('ready', resolve);
+    });
     // Build commands
     const builders = [];
     const slashCommandFiles = fs.readdirSync('./interactions/commands').filter(file => file.endsWith('.js'));
@@ -20,5 +26,6 @@ const config = require('./config.json');
     await api.put(Discord.Routes.applicationCommands(config.credentials.discord_application_id), {
         body: builders
     });
-    console.log(`Registered slash commands`);
+    utils.logInfo(`Registered slash commands`);
+    process.exit(0);
 })();

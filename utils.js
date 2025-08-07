@@ -125,6 +125,31 @@ const prettyTimestamp = parsableTs => {
     return dayjs(parsableTs).utc().format('YYYY-MM-DD HH:mm:ss UTC');
 };
 
+const getUserName = async (userId, guild, includeId = false) => {
+    const bot = require('./bot.js');
+    if (guild) {
+        let member = guild.members.cache.get(userId);
+        if (!member) {
+            try {
+                member = await guild.members.fetch(userId);
+            } catch {
+                member = null;
+            }
+        }
+        return member ? (member.nickname || member.user.globalName || member.user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
+    } else {
+        let user = bot.users.cache.get(userId);
+        if (!user) {
+            try {
+                user = await bot.users.fetch(userId);
+            } catch {
+                user = null;
+            }
+        }
+        return user ? (user.globalName || user.username) + (includeId ? ` (ID: ${userId})` : '') : `User ${userId}`;
+    }
+};
+
 module.exports = {
     logInfo,
     logWarn,
@@ -136,5 +161,6 @@ module.exports = {
     isFilePlainText,
     sanitizeAudioFile,
     sleep,
-    prettyTimestamp
+    prettyTimestamp,
+    getUserName
 };

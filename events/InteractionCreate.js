@@ -12,5 +12,10 @@ module.exports = async (interaction) => {
         const cmd = require(file);
         await cmd.handler(interaction);
         utils.logInfo(`Handled ${interaction.user.tag}'s usage of context item "${interaction.commandName}"`);
+    } else if (interaction.isModalSubmit()) {
+        const file = `../interactions/modal-submits/${interaction.customId}.js`;
+        const handler = require(file);
+        await handler(interaction);
+        utils.logInfo(`Handled ${interaction.user.tag}'s modal submission to ${interaction.customId}`);
     }
 };

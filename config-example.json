@@ -5,15 +5,17 @@
         "discord_application_id": ""
     },
     "bot": {
-        "owner_id": "",
         "status": {
             "type": "Custom",
             "text": "Ping or DM me to chat!"
-        },
-        "embed_color": "#5bcefa"
+        }
+    },
+    "permissions": {
+        "owner_id": "",
+        "allow_public_access": false
     },
     "ai": {
-        "chat_model": "gpt-4.1",
+        "chat_model": "gpt-4.1-mini",
         "transcription_model": "gpt-4o-mini-transcribe",
         "system_prompt": "You are a friendly and helpful assistant."
     },
@@ -33,5 +35,6 @@
         "context": {
             "max_messages": 100
         }
-    }
+    },
+    "config_version": 1
 }
