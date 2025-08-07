@@ -37,6 +37,8 @@ module.exports = {
                 }
             }
         }
+        db.prepare(`DELETE FROM interaction_messages WHERE interaction_id = ?`).run(interactionId);
+        db.prepare(`DELETE FROM interactions WHERE prompt_message_id = ?`).run(interactionId);
         await interaction.deferReply({ flags: Discord.MessageFlags.Ephemeral });
         interaction.editReply({
             content: `Deleted all response messages.`

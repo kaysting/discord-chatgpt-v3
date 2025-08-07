@@ -8,17 +8,28 @@ dayjs.extend(require('dayjs/plugin/utc'));
 
 const log = (level, message) => {
     const ts = new Date().toISOString();
+    let f;
+    let msg;
     switch (level) {
         case 'warn':
-            console.warn(`[${ts}] [WARN] ${message}`);
+            f = console.warn;
+            msg = `[${ts}] [WARN] ${message}`;
             break;
         case 'error':
-            console.error(`[${ts}] [ERROR] ${message}`);
+            f = console.error;
+            msg = `[${ts}] [ERROR] ${message}`;
             break;
         default:
-            console.log(`[${ts}] [${level.toUpperCase()}] ${message}`);
+            f = console.log;
+            msg = `[${ts}] [${level.toUpperCase()}] ${message}`;
             break;
     }
+    f(msg);
+    if (!fs.existsSync('./logs')) {
+        fs.mkdirSync('./logs', { recursive: true });
+    }
+    const logFile = path.join('./logs', `${dayjs().format('YYYY-MM-DD')}.log`);
+    fs.appendFileSync(logFile, `${msg}\n`, 'utf8');
 };
 const logInfo = message => log('info', message);
 const logWarn = message => log('warn', message);
