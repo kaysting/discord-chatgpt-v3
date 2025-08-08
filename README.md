@@ -69,4 +69,6 @@ A bot providing a relatively full-featured AI chatbot experience in the comfort 
     - `max_bytes`: The maximum size (in bytes) audio attachments must be for them to be included as context. The transcriptions API generally allows files up to 25 MB. Take care in ensuring the model's context window isn't overflowed by large transcriptions.
   - `text_files`: Contains settings for text file inputs
     - `enabled`: Whether or not the raw data of text file attachments should be embedded in messages sent to the AI. All attachments not fitting any of the criteria above and that are small enough are checked for plain text formatting and embedded into the message.
-    - `max_bytes`: The* maximum size (in bytes) text file attachments must be for them to be validated and included as context. Take care in ensuring the model's context window isn't overflowed by large text files.
+    - `max_bytes`: The maximum size (in bytes) text file attachments must be for them to be validated and included as context. Take care in ensuring the model's context window isn't overflowed by large text files.
+  - `context`: Contains other settings for context
+    - `max_messages`: The maximum number of previous messages to send to the AI. Each complete AI response is treated as a single message, even if it's split into multiple Discord messages. Larger values here allow the AI to see further back, but correlate to slower and pricier requests. You may also max out the model's context window. Set this to `1` to only include the immediate prompt message.
