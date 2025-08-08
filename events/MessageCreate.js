@@ -86,6 +86,7 @@ module.exports = async message => {
                 if (json) {
                     try {
                         const outputEntries = JSON.parse(json);
+                        outputEntries.reverse(); // Reverse to maintain chronological order
                         input.push(...outputEntries);
                         referencedInteractions.add(interactionId);
                         return null; // Skip this message as it's already processed
@@ -325,45 +326,59 @@ module.exports = async message => {
         try {
             resend = false;
             logInfo(`Sending request to OpenAI API with ${input.length} input entries`);
-            const stream = await openai.responses.create({
+            const handleResponseItem = async item => {
+                outputEntries.push(item);
+                input.push(item);
+                if (item.type === 'function_call') {
+                    let functionOutput;
+                    try {
+                        logInfo(`Model called tool ${item.name}`);
+                        const args = item.arguments ? JSON.parse(item.arguments) : {};
+                        functionOutput = await toolHandlers[item.name](args);
+                        outputText += `\n\n-# 🛠️ Used tool \`${item.name}\`\n\n`;
+                        await message.channel.sendTyping();
+                    } catch (error) {
+                        logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
+                        functionOutput = `Error during tool execution: ${error.message}`;
+                    }
+                    const toolOutput = {
+                        type: 'function_call_output',
+                        call_id: item.call_id,
+                        output: functionOutput.toString()
+                    };
+                    outputEntries.push(toolOutput);
+                    input.push(toolOutput);
+                    resend = true;
+                } else if (item.type === 'message' && !config.ai.stream) {
+                    for (const content of item.content) {
+                        if (content.type === 'output_text') {
+                            outputText += ('\n\n' + content.text).trim();
+                        }
+                    }
+                }
+            };
+            const res = await openai.responses.create({
                 model: config.ai.chat_model,
                 input,
                 tools,
-                stream: true
+                stream: config.ai.stream
             });
-            for await (const part of stream) {
-                switch (part.type) {
-                    case 'response.output_text.delta': {
-                        outputText += part.delta;
-                        break;
-                    }
-                    case 'response.output_item.done': {
-                        const item = part.item;
-                        outputEntries.push(item);
-                        input.push(item);
-                        // Only process function call items
-                        if (part.item.type !== 'function_call') break;
-                        let functionOutput;
-                        try {
-                            logInfo(`Model called tool ${item.name}`);
-                            const args = item.arguments ? JSON.parse(item.arguments) : {};
-                            functionOutput = await toolHandlers[item.name](args);
-                            outputText += `\n\n-# 🛠️ Used tool \`${item.name}\`\n\n`;
-                            await message.channel.sendTyping();
-                        } catch (error) {
-                            logError(`Error occurred while executing tool ${item.name}: ${error.message}`);
-                            functionOutput = `Error during tool execution: ${error.message}`;
+            if (config.ai.stream) {
+                for await (const part of res) {
+                    switch (part.type) {
+                        case 'response.output_text.delta': {
+                            outputText += part.delta;
+                            break;
                         }
-                        const toolOutput = {
-                            type: 'function_call_output',
-                            call_id: item.call_id,
-                            output: functionOutput.toString()
-                        };
-                        outputEntries.push(toolOutput);
-                        input.push(toolOutput);
-                        resend = true;
-                        break;
+                        case 'response.output_item.done': {
+                            await handleResponseItem(part.item);
+                            break;
+                        }
                     }
+                }
+            } else {
+                for (const item of res.output) {
+                    await handleResponseItem(item);
                 }
             }
         } catch (error) {
@@ -372,7 +387,7 @@ module.exports = async message => {
                 logError(`Max retries reached, aborting interaction.`);
                 clearInterval(sendTypingInterval);
                 clearInterval(sendChunksInterval);
-                await sendMessage(`Error: OpenAI API request failed after multiple attempts. Please try again later.`, false);
+                await sendMessage(`Request to OpenAI failed after multiple attempts. Please try\n- Waiting a bit\n- Running \`/ignore above\` to restart the conversation\n- Alerting the bot owner if this keeps happening`, false);
                 channelResponding[message.channel.id] = false;
                 return;
             }

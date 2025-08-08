@@ -2,7 +2,7 @@
 A bot providing a relatively full-featured AI chatbot experience in the comfort of your Discord DMs.
 
 ## Features
-- Works with all of OpenAI's recent `gpt` series [models](https://platform.openai.com/docs/models)
+- Works with all* of OpenAI's `gpt` and `o` series [models](https://platform.openai.com/docs/models)
 - Responses are sent in chunks to bypass Discord's character limits
 - Chat with the bot in DMs or servers
   - Users are independent of one another and the AI can tell them apart
@@ -15,10 +15,13 @@ A bot providing a relatively full-featured AI chatbot experience in the comfort 
 - Built-in tools for random number and string generation (in addition to memory)
 - Extensible tools system allowing additional capabilities to be added to the AI
 - Slash commands and Apps menu items for...
-  - Ignoring all existing messages or above a certain point
-  - Getting an AI response as a raw text (markdown) file
+  - Ignoring all existing messages or reversing that action
+  - Getting an AI response as a raw text (.md) file
   - Quickly deleting an entire AI response
+  - Manually editing/clearing memory about you
 - Zero-maintenance storage using SQLite
+
+\* all that work with the new [Responses API](https://platform.openai.com/docs/api-reference/responses/create)
 
 ## Running the bot
 1. [Download and install Node.js](https://nodejs.org/en/download/) if you don't have it
@@ -41,4 +44,29 @@ A bot providing a relatively full-featured AI chatbot experience in the comfort 
 12. Try it out by DMing or pinging the bot!
 
 ## Configuration
-Most options are pretty self explanatory. Full docs will come soon.
+- `credentials`: Contains secret keys
+  - `openai_api_key`: Your OpenAI API key
+  - `discord_bot_token`: Your Discord bot token
+  - `discord_application_id`: Your Discord bot's ID
+- `bot`: Contains settings pertaining to the Discord bot itself
+  - `status`: Controls the bot's profile status
+    - `type`: The status type (prefix). Possible values are `Playing`, `Listening`, `Watching`, `Custom` (no prefix).
+    - `test`: The status text, following the prefix
+- `permissions`: Contains settings controlling user access to the bot
+  - `owner_id`: Your Discord user ID. User access management commands can only be used by this user.
+  - `public_access`: Whether or not users should be allowed to talk to he bot by default. If `true`, anyone can talk to the bot unless explicitly blocked. If `false`, only people explicitly allowed can talk to the bot.
+- `ai`: Contains settings for the AI
+  - `chat_model`: The OpenAI model used for conversation
+  - `transcription_model`: The OpenAI model used for audio file transcriptions
+  - `system_prompt`: Instructions that the AI model should follow when responding. This is appended to the larger internal system prompt. The model is already told its name and that it's a Discord bot, along with other important info.
+  - `stream`: Whether or not responses from OpenAI should be streamed. Keeping this `true` is generally recommended and makes the real-world response time a few seconds shorter as response chunks are sent as they're generated. Brand new models may require ID verification for your OpenAI organization to use streaming.
+- `input`: Contains settings for input types and limits
+  - `images`: Contains settings for image inputs
+    - `enabled`: Whether or not image attachments should be sent to the AI. Your configured model must support [Vision](https://platform.openai.com/docs/guides/images-vision?api-mode=responses#analyze-images), otherwise set this to `false`.
+    - `max_bytes`: The maximum size (in bytes) image attachments must be for them to be included as context
+  - `audio`: Contains settings for audio inputs
+    - `enabled`: Whether or not audio attachments (including voice messages) should be transcribed and embedded in messages sent to the AI. Transcription will be done using the configured transcription model and stored to avoid running the same file through multiple times.
+    - `max_bytes`: The maximum size (in bytes) audio attachments must be for them to be included as context. The transcriptions API generally allows files up to 25 MB. Take care in ensuring the model's context window isn't overflowed by large transcriptions.
+  - `text_files`: Contains settings for text file inputs
+    - `enabled`: Whether or not the raw data of text file attachments should be embedded in messages sent to the AI. All attachments not fitting any of the criteria above and that are small enough are checked for plain text formatting and embedded into the message.
+    - `max_bytes`: The* maximum size (in bytes) text file attachments must be for them to be validated and included as context. Take care in ensuring the model's context window isn't overflowed by large text files.

@@ -12,17 +12,22 @@
     },
     "permissions": {
         "owner_id": "",
-        "allow_public_access": false
+        "allow_public_access": true
     },
     "ai": {
-        "chat_model": "gpt-4.1-mini",
+        "chat_model": "gpt-4o",
         "transcription_model": "gpt-4o-mini-transcribe",
-        "system_prompt": "You are a friendly and helpful assistant."
+        "system_prompt": "You are a friendly and helpful assistant.",
+        "should_stream": true
     },
     "input": {
         "images": {
             "enabled": true,
             "max_bytes": 16000000
+        },
+        "pdfs": {
+            "enabled": true,
+            "max_bytes": 10000000
         },
         "audio": {
             "enabled": true,

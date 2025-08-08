@@ -5,7 +5,7 @@ module.exports = {
     // Build context entry
     builder: new Discord.ContextMenuCommandBuilder()
         .setType(Discord.ApplicationCommandType.Message)
-        .setName('Get raw response'),
+        .setName('Download response'),
     // Handle usage
     handler: async interaction => {
         const msg = interaction.options.getMessage('message');

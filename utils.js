@@ -1,27 +1,36 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const util = require('util');
 const axios = require('axios');
 const ffmpeg = require('fluent-ffmpeg');
+const { isText } = require('istextorbinary');
 const dayjs = require('dayjs');
 dayjs.extend(require('dayjs/plugin/utc'));
 
-const log = (level, message) => {
+const stripAnsi = input => {
+    return input.replace(/\x1B\[[0-9;]*m/g, '');
+};
+
+const log = (level, ...message) => {
     const ts = new Date().toISOString();
-    let f;
-    let msg;
+    let f = console.log;
+    let msg = `[${ts}] [${level.toUpperCase()}]`;
+    for (const arg of message) {
+        if (typeof arg === 'string')
+            msg += ` ${arg}`;
+        else
+            msg += ` ${util.inspect(arg, { depth: null, colors: true })}`;
+    }
+    if (level === 'debug') {
+        f = console.debug;
+    }
     switch (level) {
         case 'warn':
             f = console.warn;
-            msg = `[${ts}] [WARN] ${message}`;
             break;
         case 'error':
             f = console.error;
-            msg = `[${ts}] [ERROR] ${message}`;
-            break;
-        default:
-            f = console.log;
-            msg = `[${ts}] [${level.toUpperCase()}] ${message}`;
             break;
     }
     f(msg);
@@ -29,9 +38,10 @@ const log = (level, message) => {
         fs.mkdirSync('./logs', { recursive: true });
     }
     const logFile = path.join('./logs', `${dayjs().format('YYYY-MM-DD')}.log`);
-    fs.appendFileSync(logFile, `${msg}\n`, 'utf8');
+    fs.appendFileSync(logFile, `${stripAnsi(msg)}\n`, 'utf8');
 };
 const logInfo = message => log('info', message);
+const logDebug = message => log('debug', message);
 const logWarn = message => log('warn', message);
 const logError = message => log('error', message);
 
@@ -90,19 +100,7 @@ const downloadAttachment = async (attachment) => {
 
 const isFilePlainText = (filePath) => {
     const buffer = fs.readFileSync(filePath);
-    for (let i = 0; i < buffer.length; i++) {
-        const byte = buffer[i];
-        // Allow: tab (9), line feed (10), carriage return (13), printable ASCII (32-126)
-        if (
-            byte !== 9 &&
-            byte !== 10 &&
-            byte !== 13 &&
-            (byte < 32 || byte > 126)
-        ) {
-            return false;
-        }
-    }
-    return true;
+    return isText(null, buffer);
 };
 
 function sanitizeAudioFile(inputPath, outputPath) {
