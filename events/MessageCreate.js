@@ -139,10 +139,15 @@ module.exports = async message => {
                 const size = attachment.size || 0;
                 const url = attachment.url;
                 const imageExts = ['png', 'jpg', 'jpeg', 'webp'];
-                // Handle image attachments
                 if (config.input.images.enabled && imageExts.includes(ext) && size <= config.input.images.max_bytes) {
+                    // Handle image attachments
                     entry.content.push({
                         type: 'input_image', image_url: url
+                    });
+                } else if (config.input.pdfs.enabled && ext === 'pdf' && size <= config.input.pdfs.max_bytes) {
+                    // Handle PDF attachments
+                    entry.content.push({
+                        type: 'input_file', file_url: url
                     });
                 } else if (config.input.audio.enabled && type[0] === 'audio' && size <= config.input.audio.max_bytes) {
                     // Handle audio attachments

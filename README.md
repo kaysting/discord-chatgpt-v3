@@ -64,6 +64,9 @@ A bot providing a relatively full-featured AI chatbot experience in the comfort 
   - `images`: Contains settings for image inputs
     - `enabled`: Whether or not image attachments should be sent to the AI. Your configured model must support [Vision](https://platform.openai.com/docs/guides/images-vision?api-mode=responses#analyze-images), otherwise set this to `false`.
     - `max_bytes`: The maximum size (in bytes) image attachments must be for them to be included as context
+  - `pdfs`: Contains settings for PDF inputs
+    - `enabled`: Whether or not PDF attachments should be sent to the AI. Your configured model must support [Vision](https://platform.openai.com/docs/guides/images-vision?api-mode=responses#analyze-images), otherwise set this to `false`.
+    - `max_bytes`: The maximum size (in bytes) PDF attachments must be for them to be included as context. Currently OpenAI limits this to 10 MB.
   - `audio`: Contains settings for audio inputs
     - `enabled`: Whether or not audio attachments (including voice messages) should be transcribed and embedded in messages sent to the AI. Transcription will be done using the configured transcription model and stored to avoid running the same file through multiple times.
     - `max_bytes`: The maximum size (in bytes) audio attachments must be for them to be included as context. The transcriptions API generally allows files up to 25 MB. Take care in ensuring the model's context window isn't overflowed by large transcriptions.
