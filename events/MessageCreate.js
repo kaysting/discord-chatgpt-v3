@@ -366,6 +366,11 @@ module.exports = async message => {
                 model: config.ai.chat_model,
                 input,
                 tools,
+                truncation: 'auto',
+                reasoning: config.ai.reasoning.enabled ? {
+                    effort: config.ai.reasoning.effort,
+                    summary: 'detailed'
+                } : undefined,
                 stream: config.ai.stream
             });
             if (config.ai.stream) {

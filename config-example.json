@@ -15,9 +15,13 @@
         "allow_public_access": true
     },
     "ai": {
-        "chat_model": "gpt-4o",
+        "chat_model": "gpt-5",
         "transcription_model": "gpt-4o-mini-transcribe",
         "system_prompt": "You are a friendly and helpful assistant.",
+        "reasoning": {
+            "enabled": true,
+            "effort": "low"
+        },
         "should_stream": true
     },
     "input": {
