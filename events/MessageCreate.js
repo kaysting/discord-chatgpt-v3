@@ -18,11 +18,10 @@ const channelResponding = {};
 
 module.exports = async message => {
     channelLastMsg[message.channel.id] = message;
-    const startTime = Date.now();
     // Check if message should be processed
     if (message.author.bot) return;
     const isChannelDm = message.channel.type === Discord.ChannelType.DM;
-    const isMentioned = message.mentions.has(bot.user) || message.content.includes(`<@${bot.user.id}>`);
+    const isMentioned = message.content.includes(`<@${bot.user.id}>`);
     const refMessage = message.reference ? await message.channel.messages.fetch(message.reference.messageId).catch(() => null) : null;
     const isRepliedTo = refMessage && refMessage.author.id === bot.user.id;
     const hasContent = message.content.trim().length > 0 || message.attachments.size > 0;
@@ -35,20 +34,6 @@ module.exports = async message => {
     const shouldProcess = isValidMessageType && (isChannelDm || isMentioned || isRepliedTo) && hasContent;
     if (!shouldProcess) return;
     const interactionId = message.id;
-    // Wait for running interaction to finish
-    if (channelResponding[message.channel.id]) {
-        await new Promise(resolve => {
-            const interval = setInterval(() => {
-                if (!channelResponding[message.channel.id]) {
-                    clearInterval(interval);
-                    resolve();
-                }
-            }, 1000);
-        });
-    }
-    channelResponding[message.channel.id] = true;
-    // Log interaction start
-    logInfo(`${message.author.tag} started an interaction in channel ${message.channel.id}`);
     // Function to send message
     // Reply to the last associated message if something has been sent since
     let lastAssociatedMessage = message;
@@ -70,6 +55,37 @@ module.exports = async message => {
         }
         return msg;
     };
+    // Check author access permissions
+    const userAccess = db.prepare(`SELECT can_access FROM user_access WHERE user_id = ?`)
+        .get(message.author.id)?.can_access;
+    let canAccess = config.permissions.allow_public_access;
+    if (userAccess === 0)
+        canAccess = false;
+    if (message.author.id === config.permissions.owner_id)
+        canAccess = true;
+    if (!canAccess) {
+        logWarn(`User ${message.author.tag} (${message.author.id}) tried to interact but doesn't have access`);
+        if (userAccess === 0) {
+            await sendMessage(`Sorry, you're blocked from chatting with me.`, false);
+        } else {
+            await sendMessage(`Sorry, you don't have permission to chat with me. Contact the bot owner to be granted access.`, false);
+        }
+        return;
+    }
+    // Wait for running interaction to finish
+    if (channelResponding[message.channel.id]) {
+        await new Promise(resolve => {
+            const interval = setInterval(() => {
+                if (!channelResponding[message.channel.id]) {
+                    clearInterval(interval);
+                    resolve();
+                }
+            }, 1000);
+        });
+    }
+    channelResponding[message.channel.id] = true;
+    // Log interaction start
+    logInfo(`${message.author.tag} started an interaction in channel ${message.channel.id}`);
     // Send typing until we're finished
     await message.channel.sendTyping();
     const sendTypingInterval = setInterval(() => message.channel.sendTyping(), 5000);
