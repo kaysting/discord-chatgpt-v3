@@ -1,5 +1,5 @@
 # Discord ChatGPT v3
-A bot that adds a full-featured AI assistant experience straight to your Discord chats.
+A bot bringing a full-featured AI assistant straight to your Discord chats.
 
 ![Sample](/sample.png)
 
