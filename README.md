@@ -60,7 +60,7 @@ This is the third iteration of my Discord ChatGPT project, once again bringing a
     - `test`: The status text, following the prefix
 - `permissions`: Contains settings controlling user access to the bot
   - `owner_id`: Your Discord user ID. User access management commands can only be used by this user.
-  - `public_access`: Whether or not users should be allowed to talk to he bot by default. If `true`, anyone can talk to the bot unless explicitly blocked. If `false`, only people explicitly allowed can talk to the bot.
+  - `public_access`: Whether or not users should be allowed to talk to the bot by default. If `true`, anyone can talk to the bot unless explicitly blocked. If `false`, only people explicitly allowed can talk to the bot.
 - `ai`: Contains settings for the AI
   - `chat_model`: The OpenAI model used for conversation
   - `transcription_model`: The OpenAI model used for audio file transcriptions

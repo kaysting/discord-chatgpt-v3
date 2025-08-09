@@ -1,5 +1,7 @@
+Discord ChatGPT v3
+A bot bringing a full-featured AI assistant straight to your Discord chats.
 https://github.com/kaysting/discord-chatgpt-v3
 
-This project includes significant work by Kayla Kersting - https://kaysting.dev
+This project was developed solely by Kayla Kersting (https://kaysting.dev). See the package.json file for a list of third party modules.
 
-All redistributors of this software must retain this notice.
+All redistributors, in source or binary form, must retain this notice.
