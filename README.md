@@ -1,13 +1,17 @@
 # Discord ChatGPT v3
-A bot providing a relatively full-featured AI chatbot experience in the comfort of your Discord DMs.
+A bot that adds a full-featured AI assistant experience straight to your Discord chats.
+
+![Sample](/sample.png)
+
+This is the third iteration of my Discord ChatGPT project, once again bringing a complete rewrite to improve code quality and add more helpful features. This time, we take full advantage of OpenAI's model capabilities to provide processing for all major file types, custom tools, memory, reasoning, response streaming, and more.
 
 ## Features
 - Works with all* of OpenAI's `gpt` and `o` series [models](https://platform.openai.com/docs/models)
 - Responses are sent in chunks to bypass Discord's character limits
 - Chat with the bot in DMs or servers
   - Users are independent of one another and the AI can tell them apart
-- Supports file processing for images, audio, and text files
-  - Images use Vision
+- Supports file processing for images, PDFs, audio, and text files
+  - Images and PDFs use Vision
   - Audio uses the configured OpenAI transcription model (ideal for voice messages)
   - Text files are directly embedded into user messages
 - Efficient attachment caching to avoid unnecessary network/API usage
